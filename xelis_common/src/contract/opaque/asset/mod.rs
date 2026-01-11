@@ -121,6 +121,16 @@ pub fn asset_get_name(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, con
     Ok(SysCallResult::Return(Primitive::String(changes.data.1.get_name().to_owned()).into()))
 }
 
+// Get the decimals for this asset
+pub fn asset_get_decimals(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let asset: &Asset = zelf.as_opaque_type()?;
+    let state: &ChainState = context.get()
+        .context("Chain state not found")?;
+    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+    Ok(SysCallResult::Return(Primitive::U8(changes.data.1.get_decimals()).into()))
+}
+
 // Get the hash representation of the asset
 pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;

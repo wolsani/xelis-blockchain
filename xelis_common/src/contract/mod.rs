@@ -2134,6 +2134,16 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             550,
             Some(Type::Bool)
         );
+
+        // Asset::get_decimals
+        env.register_native_function(
+            "get_decimals",
+            Some(asset_type.clone()),
+            vec![],
+            FunctionHandler::Sync(asset_get_decimals),
+            3,
+            Some(Type::U8)
+        );
     }
 
     env
