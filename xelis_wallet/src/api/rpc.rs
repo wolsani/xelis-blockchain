@@ -712,7 +712,7 @@ async fn sign_data(context: &Context, params: DataElement) -> Result<Signature, 
 
 // Verify signed data using a public key
 async fn verify_signed_data(_: &Context, params: VerifySignedDataParams) -> Result<bool, InternalRpcError> {
-    let key = params.public_key.get_public_key();
+    let key = params.address.get_public_key();
     let key = key.decompress()
         .context("Error decompressing public key")?;
 
