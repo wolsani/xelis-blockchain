@@ -313,7 +313,7 @@ pub struct VerifySignedDataParams {
     // Signature to verify
     pub signature: Signature,
     // Public key of the signer
-    pub public_key: Address,
+    pub address: Address,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
