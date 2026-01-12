@@ -217,7 +217,7 @@ impl NetworkHandler {
     // Process a block by checking if it contains any transaction for us
     // Or that we mined it
     // Returns assets that changed and returns the highest nonce if we send a transaction
-    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64, handle_contracts_outputs: bool) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
+    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64, handle_contracts_outputs: bool, is_rescan: bool) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
         let transactions = block.transactions;
         let block = block.header;
         let block_hash = block.hash.into_owned();
@@ -269,7 +269,7 @@ impl NetworkHandler {
                     };
     
                     // Propagate the event to the wallet
-                    if broadcast {
+                    if broadcast && !is_rescan {
                         self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                     }
                 }
@@ -716,7 +716,7 @@ impl NetworkHandler {
             if let Some((block_response, outputs)) = block {
                 debug!("Processing topoheight {}", topoheight);
                 let timestamp = block_response.timestamp;
-                let changes = self.process_block(address, block_response, topoheight, false).await?;
+                let changes = self.process_block(address, block_response, topoheight, false, true).await?;
 
                 // It was requested at the same time of the block processing, so we can handle it now
                 self.handle_contracts_outputs(outputs.executions, topoheight, timestamp).await?;
@@ -1196,7 +1196,7 @@ impl NetworkHandler {
             // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
             if let Some(topoheight) = block.header.metadata.as_ref().map(|m| m.topoheight) {
                 let block_hash = block.header.hash.as_ref().clone();
-                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight, true).await? {
+                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight, true, false).await? {
                     debug!("We must sync head state, assets: {}, nonce: {:?}", detected_assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
                         let storage = self.wallet.get_storage().read().await;
@@ -1258,8 +1258,16 @@ impl NetworkHandler {
             // if the sync new blocks function takes too long, it will skip the blocks between
             // daemon topoheight and new daemon topoheight, meaning some TXs are missed
             // This can happen if you have a lot of transactions to process and the wallet is slow
+            let start = Instant::now();
+
+            // Mark the wallet as syncing
+            {
+                let mut storage = self.wallet.get_storage().write().await;
+                storage.set_syncing(true);
+            }
+
             loop {
-                debug!("Syncing new blocks from wallet topoheight {} to daemon topoheight {}", wallet_topoheight, daemon_topoheight);
+                info!("Syncing new blocks from wallet topoheight {} to daemon topoheight {}", wallet_topoheight, daemon_topoheight);
                 self.sync_new_blocks(address, wallet_topoheight, None, true).await?;
 
                 // Update the topoheight and block hash for wallet
@@ -1279,6 +1287,9 @@ impl NetworkHandler {
                     break;
                 }
             }
+
+            self.wallet.propagate_event(Event::HistorySynced { topoheight: wallet_topoheight }).await;
+            info!("Sync new blocks completed in {:?}", start.elapsed());
         } else {
             // Update the topoheight and block hash for wallet
             self.update_block_reference(daemon_topoheight, &daemon_block_hash).await?;
@@ -1287,6 +1298,7 @@ impl NetworkHandler {
         {
             debug!("Flushing storage");
             let mut storage = self.wallet.get_storage().write().await;
+            storage.set_syncing(false);
             storage.flush().await?;
             debug!("Flushed storage");
         }
@@ -1480,7 +1492,6 @@ impl NetworkHandler {
 
         // cache for all topoheight we already processed
         // this will prevent us to request more than one time the same topoheight
-        let start = Instant::now();
         let topoheight_processed = Arc::new(Mutex::new(HashSet::new()));
         let mut highest_nonce = None;
         {
@@ -1515,9 +1526,6 @@ impl NetworkHandler {
             storage.reorder_transactions_indexes(last_tx_id)?;
             debug!("txs indexes reversed successfully");
         }
-
-        self.wallet.propagate_event(Event::HistorySynced { topoheight: current_topoheight }).await;
-        info!("Sync new blocks completed in {:?}", start.elapsed());
 
         Ok(())
     }
