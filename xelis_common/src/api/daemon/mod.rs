@@ -1052,7 +1052,8 @@ pub enum NotifyEvent {
         // Contract hash to track
         contract: Hash,
         // ID of the event that is fired from the contract
-        id: u64
+        // if set to None, it will track all events from the contract
+        id: Option<u64>
     },
     // When a new contract has been deployed
     DeployContract,
