@@ -6,7 +6,13 @@ use crate::{
     account::CiphertextCache,
     asset::AssetData,
     block::TopoHeight,
-    crypto::{elgamal::CompressedCiphertext, Address, Hash, PrivateKey},
+    crypto::{
+        elgamal::CompressedCiphertext,
+        Address,
+        Hash,
+        PrivateKey,
+        Signature,
+    },
     serializer::Hexable,
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
@@ -298,6 +304,16 @@ pub struct SearchTransactionResult {
 pub struct BalanceChanged {
     pub asset: Hash,
     pub balance: u64
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct VerifySignedDataParams {
+    // Data that was signed
+    pub data: DataElement,
+    // Signature to verify
+    pub signature: Signature,
+    // Public key of the signer
+    pub public_key: Address,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
