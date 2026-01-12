@@ -1191,6 +1191,9 @@ pub struct ContractEvent<'a> {
     pub topoheight: TopoHeight,
     // which block is the TX executor
     pub block_hash: Cow<'a, Hash>,
+    // the actual event_id fired
+    pub event_id: u64,
+    // event data
     pub data: Cow<'a, ValueCell>
 }
 
