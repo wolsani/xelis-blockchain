@@ -2617,6 +2617,7 @@ impl<S: Storage> Blockchain<S> {
                                     .map(|el| json!(ContractEvent {
                                         topoheight: highest_topo,
                                         block_hash: Cow::Borrowed(&hash),
+                                        event_id: *id,
                                         data: Cow::Borrowed(el)
                                     }))
                                     .collect::<Vec<_>>();
