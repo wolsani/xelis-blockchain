@@ -2599,21 +2599,39 @@ impl<S: Storage> Blockchain<S> {
                     let caches = chain_state.get_contracts_cache();
                     for (contract, cache) in caches {
                         for (id, elements) in cache.events.iter() {
-                            let event = NotifyEvent::ContractEvent {
+                            let any_event = NotifyEvent::ContractEvent {
                                 contract: (*contract).clone(),
-                                id: *id
+                                id: None,
                             };
 
-                            if should_track_events.contains(&event) {
-                                let entry = events.entry(event)
-                                    .or_insert_with(Vec::new);
+                            let event_id = NotifyEvent::ContractEvent {
+                                contract: (*contract).clone(),
+                                id: Some(*id),
+                            };
 
-                                for el in elements {
-                                    entry.push(json!(ContractEvent {
+                            let event_id_tracked = should_track_events.contains(&event_id);
+                            let event_tracked = should_track_events.contains(&any_event);
+
+                            if  event_id_tracked || event_tracked {
+                                let elements = elements.into_iter()
+                                    .map(|el| json!(ContractEvent {
                                         topoheight: highest_topo,
                                         block_hash: Cow::Borrowed(&hash),
                                         data: Cow::Borrowed(el)
-                                    }));
+                                    }))
+                                    .collect::<Vec<_>>();
+
+                                if event_id_tracked {
+                                    let entry = events.entry(event_id)
+                                        .or_insert_with(Vec::new);
+                                    entry.extend(elements.iter().cloned());
+                                }
+
+                                if event_tracked {
+                                    let entry = events.entry(any_event)
+                                        .or_insert_with(Vec::new);
+
+                                    entry.extend(elements.into_iter());
                                 }
                             }
                         }
