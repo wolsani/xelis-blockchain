@@ -579,14 +579,16 @@ impl NetworkHandler {
                 }
 
                 // Propagate the event to the wallet
-                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
+                if !is_rescan {
+                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
+                }
             }
         }
 
         if handle_contracts_outputs {
             debug!("Handling contract outputs for block {} at topoheight {}", block_hash, topoheight);
             let outputs = self.api.get_contracts_outputs(address, topoheight).await?;
-            let outputs_assets = self.handle_contracts_outputs(outputs.executions, topoheight, block.timestamp).await?;
+            let outputs_assets = self.handle_contracts_outputs(outputs.executions, topoheight, block.timestamp, is_rescan).await?;
             assets_changed.extend(outputs_assets);
         }
 
@@ -616,7 +618,7 @@ impl NetworkHandler {
         storage.has_transaction(hash)
     }
 
-    async fn handle_contracts_outputs(&self, outputs: HashMap<ContractTransfersEntryKey<'_>, ContractTransfersEntry<'_>>, topoheight: u64, timestamp: TimestampMillis) -> Result<HashSet<Hash>, Error> {
+    async fn handle_contracts_outputs(&self, outputs: HashMap<ContractTransfersEntryKey<'_>, ContractTransfersEntry<'_>>, topoheight: u64, timestamp: TimestampMillis, is_rescan: bool) -> Result<HashSet<Hash>, Error> {
         debug!("Handling contracts outputs at topoheight {}", topoheight);
         // Aggregate all transfers per transaction caller
         let mut assets = HashSet::new();
@@ -637,7 +639,7 @@ impl NetworkHandler {
 
         for (tx_hash, transfers) in calls.into_iter() {
             debug!("Updating transaction contract transfers for tx {}", tx_hash);
-            self.create_or_update_transaction_contract(&tx_hash, topoheight, timestamp, transfers.into_iter()).await?;
+            self.create_or_update_transaction_contract(&tx_hash, topoheight, timestamp, transfers.into_iter(), is_rescan).await?;
         }
 
         Ok(assets)
@@ -719,7 +721,7 @@ impl NetworkHandler {
                 let changes = self.process_block(address, block_response, topoheight, false, true).await?;
 
                 // It was requested at the same time of the block processing, so we can handle it now
-                self.handle_contracts_outputs(outputs.executions, topoheight, timestamp).await?;
+                self.handle_contracts_outputs(outputs.executions, topoheight, timestamp, true).await?;
 
                 // Check if a change occured, we are the highest version and update balances is requested
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
@@ -1402,7 +1404,7 @@ impl NetworkHandler {
                 res = on_contract_transfers.next() => {
                     let event = res?;
                     debug!("on contract transfers event at topo {} {}", event.topoheight, event.block_hash);
-                    let assets = self.handle_contracts_outputs(event.executions, event.topoheight, event.block_timestamp).await?;
+                    let assets = self.handle_contracts_outputs(event.executions, event.topoheight, event.block_timestamp, false).await?;
 
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
@@ -1429,7 +1431,7 @@ impl NetworkHandler {
         }
     }
 
-    async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, u64)>) -> Result<(), Error> {
+    async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, u64)>, is_rescan: bool) -> Result<(), Error> {
         debug!("create_or_update_transaction_contract for tx {} at topoheight {}", tx_hash, topoheight);
         let mut storage = self.wallet.get_storage().write().await;
         let (mut tx, update) = if storage.has_transaction(tx_hash)? {
@@ -1459,6 +1461,9 @@ impl NetworkHandler {
                         storage.update_transaction(&tx_hash, &tx)?;
                     } else {
                         storage.save_transaction(&tx_hash, &tx)?;
+                        if !is_rescan {
+                            self.wallet.propagate_event(Event::NewTransaction(tx.serializable(self.wallet.get_network().is_mainnet()))).await;
+                        }
                     }
                 }
             },
