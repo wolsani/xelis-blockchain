@@ -74,6 +74,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method_with_params("set_online_mode", async_handler!(set_online_mode));
     handler.register_method_no_params("set_offline_mode", async_handler!(set_offline_mode, single));
     handler.register_method_with_params("sign_data", async_handler!(sign_data));
+    handler.register_method_with_params("verify_signed_data", async_handler!(verify_signed_data));
     handler.register_method_with_params("estimate_fees", async_handler!(estimate_fees));
     handler.register_method_with_params("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
     handler.register_method_no_params("network_info", async_handler!(network_info, single));
@@ -707,6 +708,17 @@ async fn sign_data(context: &Context, params: DataElement) -> Result<Signature, 
     let wallet: &Arc<Wallet> = context.get()?;
     let signature = wallet.sign_data(&params.to_bytes());
     Ok(signature)
+}
+
+// Verify signed data using a public key
+async fn verify_signed_data(_: &Context, params: VerifySignedDataParams) -> Result<bool, InternalRpcError> {
+    let key = params.public_key.get_public_key();
+    let key = key.decompress()
+        .context("Error decompressing public key")?;
+
+    let is_valid = params.signature.verify(&params.data.to_bytes(), &key);
+
+    Ok(is_valid)
 }
 
 // In EncryptedStorage, custom trees are already prefixed
