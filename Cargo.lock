@@ -4004,9 +4004,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite-wasm"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6725b2617a1a6c1caaf3dff3fba16db03bb27ae88cb3693405022566dd522c49"
+checksum = "e501f4c45ccd240d6ba3d5e191ef4658a7d98ac47091b25a1b0474a5e2aacfd9"
 dependencies = [
  "bytes",
  "futures-channel",
