@@ -112,6 +112,11 @@ pub enum Column {
     // {topoheight}{contract}{asset} => {version}
     VersionedContractsBalances,
 
+    // {contract_id}{event_id}{listener_id} => {topoheight}
+    EventCallbacks,
+    // {topoheight}{contract_id}{event_id}{listener_id} => {version}
+    VersionedEventCallbacks,
+
     // {topoheight}{asset_id} => {version}
     VersionedAssetsSupply
 }

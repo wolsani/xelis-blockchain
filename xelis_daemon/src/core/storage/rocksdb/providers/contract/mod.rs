@@ -3,6 +3,7 @@ mod contract_logs;
 mod balance;
 mod r#impl;
 mod scheduled_execution;
+mod event_callback;
 
 use anyhow::Context;
 use async_trait::async_trait;

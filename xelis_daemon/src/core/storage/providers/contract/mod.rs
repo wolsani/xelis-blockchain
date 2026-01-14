@@ -2,6 +2,7 @@ mod data;
 mod contract_logs;
 mod balance;
 mod scheduled_execution;
+mod event_callback;
 
 use std::borrow::Cow;
 
@@ -21,6 +22,7 @@ pub use data::*;
 pub use contract_logs::*;
 pub use balance::*;
 pub use scheduled_execution::*;
+pub use event_callback::*;
 
 // A versioned contract is a contract that can be updated or deleted
 pub type VersionedContractModule<'a> = Versioned<Option<Cow<'a, ContractModule>>>;

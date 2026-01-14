@@ -147,6 +147,8 @@ pub enum DiskContext {
     VersionedMultisig,
     #[error("versioned balance")]
     VersionedBalance,
+    #[error("event callback")]
+    EventCallback,
 }
 
 #[derive(Error, Debug, EnumDiscriminants)]
