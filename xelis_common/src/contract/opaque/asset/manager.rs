@@ -34,6 +34,10 @@ pub const TICKER_LEN: usize = 8;
 
 // Verify if the asset str is valid
 fn is_valid_str_for_asset(name: &str, whitespace: bool, uppercase_only: bool) -> bool {
+    if name.len() < 2 {
+        return false
+    }
+
     if whitespace {
         if name.starts_with(" ") || name.ends_with(" ") {
             return false
