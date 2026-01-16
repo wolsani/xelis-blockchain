@@ -8,7 +8,7 @@ use crate::core::error::BlockchainError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EventCallback {
     // Chunk ID to invoke on the listener contract
-    pub chunk_id: u64,
+    pub chunk_id: u16,
     // max_gas is the maximum gas that can be used for this callback
     // it is already paid/reserved at the time of registration
     pub max_gas: u64,
@@ -16,18 +16,18 @@ pub struct EventCallback {
 
 impl Serializer for EventCallback {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(self.chunk_id);
+        writer.write_u16(self.chunk_id);
         writer.write_u64(self.max_gas);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let chunk_id = reader.read_u64()?;
+        let chunk_id = reader.read_u16()?;
         let max_gas = reader.read_u64()?;
         Ok(EventCallback { chunk_id, max_gas })
     }
 
     fn size(&self) -> usize {
-        16
+        10 // u16 + u64
     }
 }
 
@@ -50,12 +50,15 @@ pub trait ContractEventCallbackProvider {
         topoheight: TopoHeight
     ) -> Result<(), BlockchainError>;
 
-    async fn get_last_contract_event_callback_topoheight(
+    /// Get the latest version for a specific contract event listener
+    /// at or below the specified maximum topoheight
+    async fn get_event_callback_for_contract_at_maximum_topoheight(
         &self,
         contract: &Hash,
         event_id: u64,
         listener_contract: &Hash,
-    ) -> Result<Option<TopoHeight>, BlockchainError>;
+        max_topoheight: TopoHeight,
+    ) -> Result<Option<(TopoHeight, VersionedEventCallback)>, BlockchainError>;
 
     // Get all latest versions for a specific contract event 
     // Returns (listener_contract, version) for each latest version
@@ -64,5 +67,14 @@ pub trait ContractEventCallbackProvider {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, VersionedEventCallback), BlockchainError>> + Send + 'a, BlockchainError>;
+    ) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, VersionedEventCallback), BlockchainError>> + Send + 'a, BlockchainError>;
+
+    // Get all latest versions for a specific contract event 
+    // Returns (listener_contract, version) for each latest version
+    async fn get_event_callbacks_available_at_maximum_topoheight<'a>(
+        &'a self,
+        contract: &'a Hash,
+        event_id: u64,
+        max_topoheight: TopoHeight,
+    ) -> Result<impl Iterator<Item = Result<(Hash, EventCallback), BlockchainError>> + Send + 'a, BlockchainError>;
 }

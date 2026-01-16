@@ -3,7 +3,12 @@ use log::trace;
 use xelis_common::{block::TopoHeight, crypto::Hash, serializer::{Serializer, Skip}};
 use crate::core::{
     error::{BlockchainError, DiskContext},
-    storage::{ContractEventCallbackProvider, VersionedEventCallback, SledStorage}
+    storage::{
+        ContractEventCallbackProvider,
+        VersionedEventCallback,
+        EventCallback,
+        SledStorage
+    }
 };
 
 #[async_trait]
@@ -30,17 +35,34 @@ impl ContractEventCallbackProvider for SledStorage {
         Ok(())
     }
 
-    async fn get_last_contract_event_callback_topoheight(
+    async fn get_event_callback_for_contract_at_maximum_topoheight(
         &self,
         contract: &Hash,
         event_id: u64,
         listener_contract: &Hash,
-    ) -> Result<Option<TopoHeight>, BlockchainError> {
-        trace!("get last contract event callback topoheight for contract {} event {} listener {}", 
-            contract, event_id, listener_contract);
+        max_topoheight: TopoHeight,
+    ) -> Result<Option<(TopoHeight, VersionedEventCallback)>, BlockchainError> {
+        trace!("get event callback for contract {} event {} listener {} at maximum topoheight {}", contract, event_id, listener_contract, max_topoheight);
 
         let key = Self::get_event_callback_key(contract, event_id, listener_contract);
-        self.load_optional_from_disk(&self.contracts_event_callbacks, &key)
+        let mut topo = self.load_optional_from_disk::<TopoHeight>(&self.contracts_event_callbacks, &key)?;
+        while let Some(current_topoheight) = topo {
+            let versioned_key = Self::get_versioned_event_callback_key(current_topoheight, contract, event_id, listener_contract);
+            let version: VersionedEventCallback = self.load_from_disk(
+                &self.versioned_contracts_event_callbacks,
+                &versioned_key,
+                DiskContext::EventCallback
+            )?;
+
+            if current_topoheight <= max_topoheight {
+                return Ok(Some((current_topoheight, version)));
+            }
+
+            // Move to the previous topoheight
+            topo = version.get_previous_topoheight();
+        }
+
+        Ok(None)
     }
 
     async fn get_event_callbacks_for_event_at_maximum_topoheight<'a>(
@@ -48,7 +70,7 @@ impl ContractEventCallbackProvider for SledStorage {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, VersionedEventCallback), BlockchainError>> + Send + 'a, BlockchainError> {
+    ) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, VersionedEventCallback), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get event callbacks for contract {} event {} at maximum topoheight {}", contract, event_id, max_topoheight);
 
         // Create prefix: contract + event_id
@@ -74,7 +96,52 @@ impl ContractEventCallbackProvider for SledStorage {
                 )?;
 
                 if topoheight <= max_topoheight {
-                    return Ok(Some((listener, version)));
+                    return Ok(Some((listener, topoheight, version)));
+                }
+
+                // Move to the previous topoheight
+                current_topo = version.get_previous_topoheight();
+            }
+
+            Ok(None)
+        }).filter_map(Result::transpose))
+    }
+
+    async fn get_event_callbacks_available_at_maximum_topoheight<'a>(
+        &'a self,
+        contract: &'a Hash,
+        event_id: u64,
+        max_topoheight: TopoHeight,
+    ) -> Result<impl Iterator<Item = Result<(Hash, EventCallback), BlockchainError>> + Send + 'a, BlockchainError> {
+        trace!("get event callbacks for contract {} event {} at maximum topoheight {}", contract, event_id, max_topoheight);
+
+        // Create prefix: contract + event_id
+        let prefix = Self::get_event_callback_prefix(contract, event_id);
+        
+        // Iterate using the prefix to get all listeners for this event
+        Ok(Self::scan_prefix::<Skip<40, Hash>, TopoHeight>(
+            self.snapshot.as_ref(),
+            &self.contracts_event_callbacks,
+            &prefix
+        )
+        .map(move |res| {
+            let (key, last_topoheight) = res?;
+            let listener = key.0;
+
+            let mut current_topo = Some(last_topoheight);
+            while let Some(topoheight) = current_topo {
+                let versioned_key = Self::get_versioned_event_callback_key(topoheight, contract, event_id, &listener);
+                let version: VersionedEventCallback = self.load_from_disk(
+                    &self.versioned_contracts_event_callbacks,
+                    &versioned_key,
+                    DiskContext::EventCallback
+                )?;
+
+                if topoheight <= max_topoheight {
+                    return Ok(match version.take() {
+                        Some(callback) => Some((listener, callback)),
+                        None => None,
+                    });
                 }
 
                 // Move to the previous topoheight
