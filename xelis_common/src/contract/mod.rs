@@ -2185,7 +2185,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
                 // event_id
                 ("id", Type::U64),
                 // chunk id to call when event is captured
-                ("chunk_id", Type::U16),
+                ("callback", Type::Function(FnType::new(None, false, vec![Type::Array(Box::new(Type::Any))], Some(Type::U64)))),
                 // max gas to use when calling the event listener
                 ("max_gas", Type::U64),
             ],
