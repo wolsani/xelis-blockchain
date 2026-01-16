@@ -2189,7 +2189,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
                 // max gas to use when calling the event listener
                 ("max_gas", Type::U64),
             ],
-            FunctionHandler::Sync(listen_event_fn),
+            FunctionHandler::Async(async_handler!(listen_event_fn::<P>)),
             5000,
             Some(Type::Bool)
         );
@@ -2479,7 +2479,7 @@ fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
     Ok(SysCallResult::None)
 }
 
-fn listen_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let max_gas = params.remove(3)
         .as_u64()?;
 
@@ -2497,7 +2497,7 @@ fn listen_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadat
         .into_owned()
         .into_opaque_type()?;
 
-    let state = state_from_context(context)?;
+    let (provider, state) = from_context::<P>(context)?;
     let listeners = state.events_listeners.entry((contract.clone(), event_id))
         .or_insert_with(Default::default);
 
@@ -2512,7 +2512,16 @@ fn listen_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadat
                 return Ok(Primitive::Boolean(false).into());
             }
 
-            // TODO: check from storage that we're not already registered
+            // check from storage that we're not already registered
+            if provider.has_contract_callback_for_event(
+                &contract,
+                event_id,
+                &metadata.metadata.contract_executor,
+                state.topoheight,
+            ).await? {
+                return Ok(Primitive::Boolean(false).into());
+            }
+
             entry.insert((chunk_id, max_gas));
         }
     };
