@@ -1013,6 +1013,8 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                         callback.max_gas,
                         callback.chunk_id,
                         event.params.iter().map(|v| v.deep_clone()),
+                        // disable the post hook execution to prevent stack overflow
+                        false,
                     ).await?;
                 }
             }
@@ -1029,7 +1031,8 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         gas_sources: IndexMap<Source, u64>,
         max_gas: u64,
         chunk_id: u16,
-        params: impl DoubleEndedIterator<Item = ValueCell>
+        params: impl DoubleEndedIterator<Item = ValueCell>,
+        post_hook: bool,
     ) -> Result<(), BlockchainError> {
         debug!("processing scheduled execution of contract {} with caller {}", contract, caller.get_hash());
 
@@ -1048,6 +1051,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
             max_gas,
             InvokeContract::Chunk(chunk_id, false),
             Cow::Owned(InterContractPermission::All),
+            post_hook,
         ).await {
             warn!("failed to process execution of contract {} with caller {}: {}", contract, caller.get_hash(), e);
         }
@@ -1080,6 +1084,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                     execution.max_gas,
                     execution.chunk_id,
                     execution.params.into_iter(),
+                    true,
                 ).await?;
             }
         }
@@ -1108,6 +1113,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 execution.max_gas,
                 execution.chunk_id,
                 execution.params.into_iter(),
+                true,
             ).await?;
         }
 
