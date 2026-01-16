@@ -2483,6 +2483,10 @@ fn listen_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadat
     let max_gas = params.remove(3)
         .as_u64()?;
 
+    if max_gas > MAX_GAS_USAGE_PER_TX {
+        return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
+    }
+
     let chunk_id = params.remove(2)
         .as_u16()?;
 
@@ -2512,6 +2516,8 @@ fn listen_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadat
             entry.insert((chunk_id, max_gas));
         }
     };
+
+    record_gas_allowance(context, max_gas)?;
 
     Ok(Primitive::Boolean(true).into())
 }
