@@ -10,6 +10,7 @@ use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedBalance, VersionedNonce},
     asset::VersionedAssetData,
+    versioned_type::Versioned,
     block::{Block, BlockVersion, TopoHeight},
     config::{EXTRA_BASE_FEE_BURN_PERCENT, FEE_PER_KB, XELIS_ASSET},
     contract::{
@@ -81,7 +82,7 @@ struct ContractManager<'b> {
     // all events registrations that must be stored
     events_registrations: HashMap<(Hash, u64), Vec<(Hash, EventCallback)>>,
     // all events already processed from storage
-    events_processed: HashSet<(Hash, u64)>,
+    events_processed: HashMap<(Hash, u64), HashSet<Hash>>,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -339,6 +340,58 @@ impl<'a> FinalizedChainState<'a> {
                 storage.set_contract_scheduled_execution_at_topoheight(&execution.contract, self.topoheight, &execution, execution_topoheight).await?;
             } else {
                 warn!("scheduled execution {} kind mismatch, expected TopoHeight", execution.hash);
+            }
+        }
+
+        // Apply all event callback registrations
+        debug!("storing event callbacks registrations");
+        for ((contract, event_id), listeners) in self.contract_manager.events_registrations {
+            // Remove all previously processed for this event
+            // So in case it was registered, consumed, and re registered in the same block, we only keep the last one
+            let mut processed_listeners = self.contract_manager.events_processed.get_mut(&(contract.clone(), event_id));
+
+            for (listener_contract, callback) in listeners {
+                trace!("storing event callback registration for event {} of contract {} to listener {} at topoheight {}", event_id, contract, listener_contract, self.topoheight);
+                if processed_listeners.as_mut().map_or(false, |v| v.remove(&contract)) {
+                    trace!("removing previous event callback registrations for event {} of contract {} at topoheight {}", event_id, contract, self.topoheight);
+                }
+
+                let prev_topo = storage.get_event_callback_for_contract_at_maximum_topoheight(
+                    &contract,
+                    event_id,
+                    &listener_contract,
+                    self.topoheight,
+                ).await?
+                .map(|(topo, _)| topo);
+
+                storage.set_last_contract_event_callback(
+                    &contract,
+                    event_id,
+                    &listener_contract,
+                    Versioned::new(Some(callback), prev_topo),
+                    self.topoheight
+                ).await?;
+            }
+        }
+
+        for ((contract, event_id), listeners) in self.contract_manager.events_processed {
+            for listener_contract in listeners {
+                trace!("removing event callback registration for event {} of contract {} to listener {} at topoheight {}", event_id, contract, listener_contract, self.topoheight);
+                let prev_topo = storage.get_event_callback_for_contract_at_maximum_topoheight(
+                    &contract,
+                    event_id,
+                    &listener_contract,
+                    self.topoheight,
+                ).await?
+                .map(|(topo, _)| topo);
+
+                storage.set_last_contract_event_callback(
+                    &contract,
+                    event_id,
+                    &listener_contract,
+                    Versioned::new(None, prev_topo),
+                    self.topoheight
+                ).await?;
             }
         }
 
@@ -923,19 +976,31 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 debug!("executing event callback {} for contract {}", event.event_id, event.contract);
 
                 // If we've already processed those from storage, we must handle those pending in memory
-                let callbacks = if self.contract_manager.events_processed.insert((event.contract.clone(), event.event_id)) {
-                    debug!("event {} for contract {} already processed, skipping", event.event_id, event.contract);
-                    let topoheight = self.inner.topoheight;
-                    let mut callbacks = self.inner.storage.get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?
-                        .collect::<Result<Vec<_>, _>>()?;
+                let contract_key = (event.contract.clone(), event.event_id);
+                let callbacks = match self.contract_manager.events_processed.entry(contract_key.clone()) {
+                    Entry::Occupied(_) => {
+                        debug!("event {} for contract {} already processed from storage, getting pending callbacks from memory", event.event_id, event.contract);
+                        // we don't need to include them into our processed list, because we just delete them from registrations
+                        self.contract_manager.events_registrations.remove(&contract_key)
+                            .unwrap_or_default()
+                    },
+                    Entry::Vacant(entry) => {
+                        debug!("event {} for contract {} already processed, skipping", event.event_id, event.contract);
+                        let topoheight = self.inner.topoheight;
+                        let mut callbacks = self.inner.storage.get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?
+                            .collect::<Result<Vec<_>, _>>()?;
 
-                    // Sort by contract hash to have a deterministic order
-                    callbacks.sort_by(|a, b| a.0.cmp(&b.0));
+                        // Sort by contract hash to have a deterministic order
+                        callbacks.sort_by(|a, b| a.0.cmp(&b.0));
 
-                    callbacks
-                } else {
-                    self.contract_manager.events_registrations.remove(&(event.contract.clone(), event.event_id))
-                        .unwrap_or_default()                        
+                        entry.insert(
+                            callbacks.iter()
+                                .map(|(contract, _)| contract.clone())
+                                .collect()
+                        );
+
+                        callbacks
+                    }
                 };
 
                 for (contract, callback) in callbacks {
