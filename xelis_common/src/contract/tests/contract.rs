@@ -69,6 +69,7 @@ async fn test_execute_simple_contract() {
         10000,
         InvokeContract::Entry(0),
         Cow::Owned(Default::default()),
+        true,
     ).await;
 
     assert!(result.is_ok(), "contract execution failed: {:?}", result);
@@ -102,6 +103,7 @@ async fn test_contract_with_computation() {
         10000,
         InvokeContract::Entry(0),
         Cow::Owned(Default::default()),
+        true,
     ).await;
 
     assert!(result.is_ok(), "contract execution failed: {:?}", result);
@@ -138,6 +140,7 @@ async fn test_contract_with_parameters() {
         10000,
         InvokeContract::Entry(0),
         Cow::Owned(Default::default()),
+        true,
     ).await;
 
     assert!(result.is_ok(), "contract execution failed: {:?}", result);
@@ -178,6 +181,7 @@ async fn test_refund_with_gas_sources() {
         10000,
         InvokeContract::Entry(0),
         Cow::Owned(Default::default()),
+        true,
     ).await;
 
     let execution = result.expect("contract execution failed");

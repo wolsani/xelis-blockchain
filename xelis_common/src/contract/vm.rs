@@ -275,6 +275,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     max_gas: u64,
     invoke: InvokeContract,
     permission: Cow<'a, InterContractPermission>,
+    post_execution: bool,
 ) -> Result<ExecutionResult, ContractError<E>> {
     debug!("Invoking contract {}: {:?}", contract, invoke);
     // Deposits are actually added to each balance
@@ -357,8 +358,10 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         }
 
         // Post contract execution hook
-        state.post_contract_execution(&caller, contract.as_ref()).await
-            .map_err(ContractError::State)?;
+        if post_execution {
+            state.post_contract_execution(&caller, contract.as_ref()).await
+                .map_err(ContractError::State)?;
+        }
     } else {
         // Otherwise, something was wrong, we delete the outputs made by the contract
         outputs.clear();
