@@ -209,8 +209,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
             ContractCaller::Transaction(_, tx) => {
                 Source::Account(tx.get_source().clone())
             },
-            ContractCaller::Scheduled(_, _) => {
-                return Err(EnvironmentError::Static("cannot pay from caller scheduled execution")).into();
+            _ => {
+                return Err(EnvironmentError::Static("cannot pay from non transaction call")).into();
             }
         };
 
@@ -422,8 +422,8 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
             ContractCaller::Transaction(_, tx) => {
                 Source::Account(tx.get_source().clone())
             },
-            ContractCaller::Scheduled(_, _) => {
-                return Err(EnvironmentError::Static("cannot pay from caller scheduled execution")).into();
+            _ => {
+                return Err(EnvironmentError::Static("cannot pay from non transaction caller")).into();
             }
         };
 

@@ -54,7 +54,9 @@ pub enum ContractCaller<'a> {
     // Scheduled is formed from hash(contract, topoheight)
     // to simulate a TX hash for logs and tracking
     // Second hash is the contract hash
-    Scheduled(Cow<'a, Hash>, Cow<'a, Hash>)
+    Scheduled(Cow<'a, Hash>, Cow<'a, Hash>),
+    // contract from which the event is, actual contract being invoked
+    EventCallback(Cow<'a, Hash>, Cow<'a, Hash>),
 }
 
 impl<'a> ContractCaller<'a> {
@@ -62,6 +64,7 @@ impl<'a> ContractCaller<'a> {
         match self {
             Self::Transaction(hash, _) => Cow::Borrowed(hash),
             Self::Scheduled(hash, _) => hash.clone(),
+            Self::EventCallback(hash, _) => hash.clone(),
         }
     }
 }
@@ -284,7 +287,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         &mut chain_state,
         &caller,
         invoke,
-        contract,
+        contract.clone(),
         deposits.map(|(d, _)| d.clone()).unwrap_or_default(),
         parameters,
         max_gas
@@ -352,6 +355,10 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
             debug!("After refunding gas sources, used gas: {}, refund gas: {}, set refund to 0", used_gas, refund_gas);
             refund_gas = 0;
         }
+
+        // Post contract execution hook
+        state.post_contract_execution(&caller, contract.as_ref()).await
+            .map_err(ContractError::State)?;
     } else {
         // Otherwise, something was wrong, we delete the outputs made by the contract
         outputs.clear();
@@ -384,7 +391,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
                     debug!("refunding deposits for transaction {}", hash);
                     refund_deposits(tx.get_source(), state, deposits, decompressed_deposits).await?;
                 },
-                ContractCaller::Scheduled(_, _) => {
+                _ => {
                     warn!("we have some deposits to refund but no TX is linked to it! These deposits are now lost in the void");
                 }
             }

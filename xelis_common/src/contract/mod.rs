@@ -24,7 +24,7 @@ use std::{
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use curve25519_dalek::Scalar;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::{IndexMap, IndexSet, map::Entry as IndexEntry};
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -150,6 +150,17 @@ impl<'a> ExecutionsManager<'a> {
     }
 }
 
+// Callback event to be processed after the execution
+#[derive(Debug, Clone)]
+pub struct CallbackEvent {
+    // Contract from which it is triggered
+    pub contract: Hash,
+    // Event id
+    pub event_id: u64,
+    // Params to call the callback
+    pub params: Vec<ValueCell>,
+}
+
 // ChainState shared across each executions
 // The ChainState must be cloned before being used.
 // If the contract execution is a success, the updated version
@@ -196,6 +207,11 @@ pub struct ChainState<'a> {
     pub injected_gas: IndexMap<Source, u64>,
     // executions manager
     pub executions: ExecutionsManager<'a>,
+    // Events to callback after the execution
+    pub events: Vec<CallbackEvent>,
+    // Listeners for events registered
+    // (contract, event_id) -> (listener_contract -> (chunk_id, max_gas))
+    pub events_listeners: HashMap<(Hash, u64), IndexMap<Hash, (u16, u64)>>,
     // Permission for inter-contract calls
     pub permission: Cow<'a, InterContractPermission>,
     // The contract environments available
@@ -1909,13 +1925,13 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
         // this is useful for applications that want to be 
         // dynamic and raise events on a specific action
         env.register_native_function(
-            "fire_event",
+            "fire_rpc_event",
             None,
             vec![
                 ("id", Type::U64),
                 ("data", Type::Any)
             ],
-            FunctionHandler::Sync(fire_event_fn),
+            FunctionHandler::Sync(rpc_event_fn),
             250,
             None
         );
@@ -2143,6 +2159,39 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             FunctionHandler::Sync(asset_get_decimals),
             3,
             Some(Type::U8)
+        );
+
+        // Send an event that can be captured by others contracts which are listening to it
+        env.register_native_function(
+            "emit_event",
+            None,
+            vec![
+                // event_id
+                ("id", Type::U64),
+                // parameters to give with this event
+                ("args", Type::Array(Box::new(Type::Any))),
+            ],
+            FunctionHandler::Sync(emit_event_fn),
+            1000,
+            None
+        );
+
+        env.register_native_function(
+            "listen_event",
+            None,
+            vec![
+                // contract hash
+                ("contract", hash_type.clone()),
+                // event_id
+                ("id", Type::U64),
+                // chunk id to call when event is captured
+                ("chunk_id", Type::U16),
+                // max gas to use when calling the event listener
+                ("max_gas", Type::U64),
+            ],
+            FunctionHandler::Sync(listen_event_fn),
+            5000,
+            Some(Type::Bool)
         );
     }
 
@@ -2382,7 +2431,7 @@ pub async fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheig
     }
 }
 
-fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let data = params.remove(1);
     let id = params.remove(0)
         .as_u64()?;
@@ -2406,6 +2455,65 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
     entry.push(constant);
 
     Ok(SysCallResult::None)
+}
+
+fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+    let args = params.remove(1)
+        .into_owned()
+        .to_vec()?
+        .into_iter()
+        .map(|v| v.into_owned())
+        .collect();
+
+    let id = params.remove(0)
+        .as_u64()?;
+
+    let state = state_from_context(context)?;
+
+    state.events.push(CallbackEvent {
+        contract: metadata.metadata.contract_executor.clone(),
+        event_id: id,
+        params: args,
+    });
+
+    Ok(SysCallResult::None)
+}
+
+fn listen_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+    let max_gas = params.remove(3)
+        .as_u64()?;
+
+    let chunk_id = params.remove(2)
+        .as_u16()?;
+
+    let event_id = params.remove(1)
+        .as_u64()?;
+
+    let contract: Hash = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let state = state_from_context(context)?;
+    let listeners = state.events_listeners.entry((contract.clone(), event_id))
+        .or_insert_with(Default::default);
+
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, contract.clone());
+
+    // Verify if we're already listening to this event
+    match listeners.entry(metadata.metadata.contract_executor.clone()) {
+        IndexEntry::Occupied(_) => return Ok(Primitive::Boolean(false).into()),
+        IndexEntry::Vacant(entry) => {
+            // Event is already registered in our cache
+            if !cache.events_listeners.insert((contract.clone(), event_id)) {
+                return Ok(Primitive::Boolean(false).into());
+            }
+
+            // TODO: check from storage that we're not already registered
+            entry.insert((chunk_id, max_gas));
+        }
+    };
+
+    Ok(Primitive::Boolean(true).into())
 }
 
 fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {

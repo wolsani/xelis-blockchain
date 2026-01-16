@@ -197,6 +197,13 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         &mut self,
         hash: &'a Hash
     ) -> Result<(), E>;
+
+    /// Post contract execution hook
+    async fn post_contract_execution(
+        &mut self,
+        caller: &ContractCaller<'a>,
+        contract: &Hash,
+    ) -> Result<(), E>;
 }
 
 #[async_trait]

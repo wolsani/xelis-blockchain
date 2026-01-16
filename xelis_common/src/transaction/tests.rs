@@ -994,6 +994,8 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
                 global_executions: &self.executions.executions,
                 changes: Default::default(),
             },
+            events: Default::default(),
+            events_listeners: Default::default(),
             permission,
             gas_fee: 0,
             gas_fee_allowance: 0,
@@ -1037,6 +1039,17 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
 
     async fn remove_contract_module(&mut self, hash: &'a Hash) -> Result<(), ()> {
         self.contracts.remove(hash);
+        Ok(())
+    }
+
+
+    /// Post contract execution hook
+    async fn post_contract_execution(
+        &mut self,
+        _: &ContractCaller<'a>,
+        _: &Hash,
+    ) -> Result<(), ()> {
+        // For tests, we don't need to do anything
         Ok(())
     }
 }
