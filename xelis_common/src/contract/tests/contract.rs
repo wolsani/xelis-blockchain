@@ -13,11 +13,10 @@ use crate::{
         ContractMetadata,
         ContractModule,
         Source,
-        tests::TestChainState,
         vm::{self, ContractCaller, InvokeContract}
     },
     crypto::Hash,
-    transaction::verify::BlockchainContractState
+    transaction::{tests::MockChainState, verify::BlockchainContractState}
 };
 
 pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code: &str) -> anyhow::Result<Module> {
@@ -35,7 +34,7 @@ pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code
     Ok(module)
 }
 
-pub fn create_contract(state: &mut TestChainState, code: &str) -> anyhow::Result<Hash> {
+pub fn create_contract(state: &mut MockChainState, code: &str) -> anyhow::Result<Hash> {
     let module = compile_contract(&state.env, code)?;
 
     let hash = Hash::zero();
@@ -56,7 +55,7 @@ async fn test_execute_simple_contract() {
         }
     "#;
 
-    let mut chain_state = TestChainState::new();
+    let mut chain_state = MockChainState::new();
     let contract_hash = create_contract(&mut chain_state, code).expect("create contract");
 
     // Invoke the contract with entry point 0
@@ -89,7 +88,7 @@ async fn test_contract_with_computation() {
         }
     "#;
 
-    let mut chain_state = TestChainState::new();
+    let mut chain_state = MockChainState::new();
     let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
 
     // Invoke the contract
@@ -120,7 +119,7 @@ async fn test_contract_with_parameters() {
         }
     "#;
 
-    let mut chain_state = TestChainState::new();
+    let mut chain_state = MockChainState::new();
     let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
 
     // Invoke the contract with parameters (10 and 20)
@@ -158,7 +157,7 @@ async fn test_refund_with_gas_sources() {
         }
     "#;
 
-    let mut chain_state = TestChainState::new();
+    let mut chain_state = MockChainState::new();
     let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
 
     let contract1 = Hash::new([2u8; 32]);

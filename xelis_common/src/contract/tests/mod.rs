@@ -1,32 +1,26 @@
 mod contract;
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{collections::HashMap};
 
 use async_trait::async_trait;
-use curve25519_dalek::{Scalar, ristretto::CompressedRistretto, traits::Identity};
-use indexmap::{IndexMap, IndexSet};
+use curve25519_dalek::Scalar;
+use indexmap::IndexMap;
 use xelis_vm::ValueCell;
 
 use crate::{
     block::*,
     config::XELIS_ASSET,
     contract::{
-        ChainState as ContractChainState,
-        ExecutionsManager,
-        ContractEventTracker,
         ContractModule,
         ContractProvider,
         ContractStorage,
-        InterContractPermission,
-        vm::ContractCaller
     },
     crypto::{
         Hash,
-        elgamal::CompressedPublicKey,
         proofs::G
     },
     transaction::{
-        tests::AccountChainState,
+        tests::{AccountChainState, MockChainState},
         verify::{BlockchainApplyState, BlockchainContractState}
     },
     versioned_type::VersionedState
@@ -93,56 +87,9 @@ impl ContractProvider for MockProvider {
     }
 }
 
-// Re-export ChainState from transaction tests which implements all required traits
-pub use crate::transaction::tests::MockChainState as TestChainState;
-
-pub fn test_chain_state(contract: Hash) -> ContractChainState<'static> {
-    let block_hash = Box::leak(Box::new(Hash::zero()));
-    let header = BlockHeader::new(
-        BlockVersion::V3,
-        0,
-        0,
-        IndexSet::new(),
-        [0u8; EXTRA_NONCE_SIZE],
-        CompressedPublicKey::new(CompressedRistretto::identity()),
-        IndexSet::new(),
-    );
-    let block = Box::leak(Box::new(Block::new(header, Vec::new())));
-    let global_caches = Box::leak(Box::new(HashMap::new()));
-    let global_executions = Box::leak(Box::new(HashMap::new()));
-
-    ContractChainState {
-        debug_mode: false,
-        mainnet: true,
-        entry_contract: Cow::Owned(contract.clone()),
-        topoheight: 1,
-        block_hash,
-        block,
-        caller: ContractCaller::Scheduled(Cow::Owned(Hash::zero()), Cow::Owned(contract.clone())),
-        caches: HashMap::new(),
-        modules: HashMap::new(),
-        outputs: Vec::new(),
-        tracker: ContractEventTracker::default(),
-        global_caches,
-        assets: HashMap::new(),
-        injected_gas: IndexMap::new(),
-        executions: ExecutionsManager {
-            allow_executions: true,
-            global_executions,
-            changes: Default::default(),
-        },
-        events: Default::default(),
-        events_listeners: Default::default(),
-        permission: Cow::Owned(InterContractPermission::default()),
-        gas_fee: 0,
-        gas_fee_allowance: 0,
-        environments: Cow::Owned(HashMap::new()),
-    }
-}
-
 #[tokio::test]
 async fn test_blockchain_apply_state_gas_tracking() {
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     
     // Test gas fee tracking
     state.add_gas_fee(1000).await.unwrap();
@@ -165,7 +112,7 @@ async fn test_blockchain_apply_state_gas_tracking() {
 
 #[tokio::test]
 async fn test_contract_balance_for_gas() {
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let contract_hash = Hash::zero();
     
     // Get contract balance (should initialize to 0)
@@ -210,7 +157,7 @@ async fn test_contract_balance_for_gas() {
 async fn test_refund_gas_sources_single_contract() {
     use crate::contract::{vm::refund_gas_sources, Source};
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let contract_hash = Hash::zero();
     
     // Initialize contract with balance
@@ -239,7 +186,7 @@ async fn test_refund_gas_sources_single_account() {
     use crate::contract::{vm::refund_gas_sources, Source};
     use crate::crypto::KeyPair;
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let keypair = KeyPair::new();
     let account = keypair.get_public_key().compress();
     
@@ -270,7 +217,7 @@ async fn test_refund_gas_sources_single_account() {
 async fn test_refund_gas_sources_multiple_contracts() {
     use crate::contract::{vm::refund_gas_sources, Source};
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let contract1 = Hash::zero();
     let contract2 = Hash::new([1u8; 32]);
     
@@ -311,7 +258,7 @@ async fn test_refund_gas_sources_multiple_contracts() {
 async fn test_refund_gas_sources_proportional_different_amounts() {
     use crate::contract::{vm::refund_gas_sources, Source};
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let contract1 = Hash::zero();
     let contract2 = Hash::new([1u8; 32]);
     
@@ -353,7 +300,7 @@ async fn test_refund_gas_sources_proportional_different_amounts() {
 async fn test_refund_gas_sources_all_gas_used() {
     use crate::contract::{vm::refund_gas_sources, Source};
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let contract = Hash::zero();
     
     // Initialize contract with balance
@@ -381,7 +328,7 @@ async fn test_refund_gas_sources_all_gas_used() {
 async fn test_refund_gas_sources_no_overflow() {
     use crate::contract::{vm::refund_gas_sources, Source};
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let contract = Hash::zero();
     
     // Initialize contract with balance
@@ -404,7 +351,7 @@ async fn test_refund_gas_sources_mixed_sources() {
     use crate::contract::{vm::refund_gas_sources, Source};
     use crate::crypto::KeyPair;
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     let contract = Hash::zero();
     let keypair = KeyPair::new();
     let account = keypair.get_public_key().compress();
@@ -454,7 +401,7 @@ async fn test_refund_gas_sources_mixed_sources() {
 async fn test_refund_gas_sources_empty_sources() {
     use crate::contract::vm::refund_gas_sources;
 
-    let mut state = TestChainState::new();
+    let mut state = MockChainState::new();
     
     // Empty gas sources - should not error
     let gas_sources = IndexMap::new();
