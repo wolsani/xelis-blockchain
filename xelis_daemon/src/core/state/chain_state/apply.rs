@@ -943,7 +943,8 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                     self.process_execution(
                         Cow::Owned(event.contract.clone()),
                         ContractCaller::EventCallback(Cow::Owned(contract.clone()), Cow::Owned(event.contract.clone())),
-                        Default::default(),
+                        // Gas source is the contract being called
+                        [(Source::Contract(contract.clone()), callback.max_gas)].into_iter().collect(),
                         callback.max_gas,
                         callback.chunk_id,
                         event.params.iter().map(|v| v.deep_clone()),
