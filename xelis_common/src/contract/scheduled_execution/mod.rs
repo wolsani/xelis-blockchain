@@ -23,6 +23,7 @@ use crate::{
         FEE_PER_BYTE_IN_CONTRACT_MEMORY,
         FEE_PER_BYTE_STORED_CONTRACT,
         TX_GAS_BURN_PERCENT,
+        MAX_GAS_USAGE_PER_TX,
         XELIS_ASSET
     },
     contract::{
@@ -177,6 +178,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     let p = params[1].as_ref().as_vec()?;
     let max_gas = params[2].as_u64()?;
     let use_contract_balance = params[3].as_bool()?;
+
+    if max_gas > MAX_GAS_USAGE_PER_TX {
+        return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
+    }
 
     if p.len() > (u8::MAX - 1) as usize {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
@@ -440,6 +445,10 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
     // Total max gas allocated to this execution
     execution.max_gas = execution.max_gas.checked_add(amount)
         .ok_or(EnvironmentError::GasOverflow)?;
+
+    if execution.max_gas > MAX_GAS_USAGE_PER_TX {
+        return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
+    }
 
     if execution.gas_sources.len() >= u16::MAX as usize && !execution.gas_sources.contains_key(&source) {
         return Err(EnvironmentError::Static("too many gas injection sources")).into();
