@@ -34,7 +34,7 @@ use xelis_common::{
     tokio::{
         select,
         spawn_task,
-        sync::{mpsc::channel, Mutex},
+        sync::{mpsc::channel, Mutex, Semaphore},
         task::{JoinError, JoinHandle},
         time::sleep
     },
@@ -281,7 +281,10 @@ impl NetworkHandler {
         // Highest nonce we found in this block
         let mut our_highest_nonce = None;
 
+        let shared_semaphores: Mutex<HashMap<Hash, Arc<Semaphore>>> = Mutex::new(HashMap::new());
+
         let block_hash = &block_hash;
+        let shared_semaphores = &shared_semaphores;
         let results: Vec<(Option<TransactionEntry>, Option<u64>, HashSet<Hash>)> = stream::iter(transactions.into_iter())
             .map(|tx| async move {
                 let mut assets_changed = HashSet::new();
@@ -310,6 +313,7 @@ impl NetworkHandler {
                         if is_owner {
                             let payload = payload.into_owned();
                             assets_changed.insert(payload.asset.clone());
+                            self.fetch_if_asset_not_found(&payload.asset, &shared_semaphores).await?;
     
                             Some(EntryData::Burn { asset: payload.asset, amount: payload.amount, fee: tx.fee, nonce: tx.nonce })
                         } else {
@@ -367,6 +371,8 @@ impl NetworkHandler {
                                     None
                                 };
 
+                                self.fetch_if_asset_not_found(&asset, &shared_semaphores).await?;
+
                                 debug!("Decrypting amount from TX {} of asset {}", tx.hash, asset);
                                 let ciphertext = Ciphertext::new(commitment, handle);
                                 let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
@@ -416,6 +422,8 @@ impl NetworkHandler {
                                     continue;
                                 }
 
+                                self.fetch_if_asset_not_found(&asset, &shared_semaphores).await?;
+
                                 match deposit {
                                     ContractDeposit::Public(amount) => {
                                         deposits.insert(asset, amount);
@@ -453,6 +461,8 @@ impl NetworkHandler {
                                     if !should_scan_history {
                                         continue;
                                     }
+
+                                    self.fetch_if_asset_not_found(&asset, &shared_semaphores).await?;
 
                                     match deposit {
                                         ContractDeposit::Public(amount) => {
@@ -645,6 +655,52 @@ impl NetworkHandler {
         Ok(assets)
     }
 
+    // Ensure that an asset is present in storage, otherwise fetch it from daemon and store it
+    // semaphores is used to prevent multiple simultaneous fetches for the same asset
+    async fn fetch_if_asset_not_found<'a>(&self, asset: &'a Hash, sempahores: &Mutex<HashMap<Hash, Arc<Semaphore>>>) -> Result<(), Error> {
+        trace!("Verifying asset {} pressence in storage", asset);
+
+        // First check in case we already have it
+        {
+            let storage = self.wallet.get_storage().read().await;
+            // Check if we already have this asset
+            if storage.has_asset(asset).await? {
+                return Ok(());
+            }
+        }
+
+        // We don't have it, acquire the semaphore for this asset
+        debug!("Acquiring semaphore to fetch asset {}", asset);
+        let _permit = {
+            let mut lock = sempahores.lock().await;
+
+            lock.entry(asset.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone()
+            .acquire_owned().await?
+        };
+
+        // Check again in case we got it while waiting for the semaphore
+        {
+            let storage = self.wallet.get_storage().read().await;
+            // Check again if we already have this asset (maybe another task fetched it while we were waiting for the semaphore)
+            if storage.has_asset(asset).await? {
+                return Ok(());
+            }
+        }
+
+        debug!("Asset {} not found in storage, fetching it from daemon", asset);
+        let data = self.api.get_asset(asset).await?;
+        {
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.add_asset(asset, data.inner).await?;
+        }
+
+        drop(_permit);
+
+        Ok(())
+    }
+
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
     // When the block is requested, we don't limit the syncing to asset in parameter
     async fn get_balance_and_transactions(&self, topoheight_processed: Arc<Mutex<HashSet<u64>>>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
@@ -721,7 +777,8 @@ impl NetworkHandler {
                 let changes = self.process_block(address, block_response, topoheight, false, true).await?;
 
                 // It was requested at the same time of the block processing, so we can handle it now
-                self.handle_contracts_outputs(outputs.executions, topoheight, timestamp, true).await?;
+                let assets = self.handle_contracts_outputs(outputs.executions, topoheight, timestamp, true).await?;
+                trace!("Contract outputs at topoheight {} affected {} assets", topoheight, assets.len());
 
                 // Check if a change occured, we are the highest version and update balances is requested
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
