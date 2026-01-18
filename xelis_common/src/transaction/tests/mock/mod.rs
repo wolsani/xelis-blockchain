@@ -1,8 +1,9 @@
-use std::{borrow::Cow, collections::HashMap, collections::hash_map::Entry, sync::Arc};
+use std::{borrow::Cow, collections::{HashMap, VecDeque, hash_map::Entry}, sync::Arc};
 use anyhow::Context;
 use async_trait::async_trait;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity};
 use indexmap::{IndexMap, IndexSet};
+use log::warn;
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{Environment, Module};
 use crate::{
@@ -25,7 +26,7 @@ use crate::{
         ContractVersion,
         InterContractPermission,
         build_environment,
-        vm::ContractCaller
+        vm::{self, ContractCaller, InvokeContract}
     },
     crypto::{
         elgamal::{Ciphertext, CompressedPublicKey},
@@ -56,7 +57,7 @@ pub struct MockAccount {
 pub struct MockChainState {
     pub assets: HashMap<Hash, Option<AssetChanges>>,
     pub tracker: ContractEventTracker,
-    pub events: Vec<CallbackEvent>,
+    pub events: VecDeque<CallbackEvent>,
     pub events_listeners: HashMap<(Hash, u64), Vec<(Hash, EventCallbackRegistration)>>,
     pub accounts: HashMap<PublicKey, MockAccount>,
     pub multisig: HashMap<PublicKey, MultiSigPayload>,
@@ -89,7 +90,7 @@ impl MockChainState {
         Self {
             assets: HashMap::new(),
             tracker: Default::default(),
-            events: Vec::new(),
+            events: VecDeque::new(),
             events_listeners: HashMap::new(),
             accounts: HashMap::new(),
             multisig: HashMap::new(),
@@ -108,7 +109,31 @@ impl MockChainState {
         }
     }
 
-    pub async fn on_post_execution(&mut self) -> Result<(), anyhow::Error> {
+    pub async fn on_post_execution(&mut self, caller: &Hash) -> Result<(), anyhow::Error> {
+        while let Some(event) = self.events.pop_front() {
+            let contract_key = (event.contract.clone(), event.event_id);
+            if let Some(listeners) = self.events_listeners.remove(&contract_key) {
+                for (contract, callback) in listeners {
+                    if self.load_contract_module(Cow::Owned(contract.clone())).await? {
+                        if let Err(e) = vm::invoke_contract(
+                            ContractCaller::EventCallback(Cow::Owned(caller.clone()), Cow::Owned(event.contract.clone())),
+                            self,
+                            Cow::Owned(contract.clone()),
+                            None,
+                            event.params.iter().map(|p| p.deep_clone()),
+                            Default::default(),
+                            callback.max_gas,
+                            InvokeContract::Chunk(callback.chunk_id, false),
+                            Cow::Owned(InterContractPermission::All),
+                            false,
+                        ).await {
+                            warn!("failed to process execution of contract {} with caller {}: {}", contract, caller, e);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -388,7 +413,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
 
     async fn merge_contract_changes(
         &mut self,
-        mut changes: ChainStateChanges,
+        changes: ChainStateChanges,
         mut executions_changes: ExecutionsChanges,
     ) -> Result<(), anyhow::Error> {
         // Merge contract caches
@@ -408,7 +433,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
 
         self.assets = changes.assets;
         self.tracker = changes.tracker;
-        self.events.append(&mut changes.events);
+        self.events.extend(changes.events);
 
         for (key, mut listeners) in changes.events_listeners {
             match self.events_listeners.entry(key) {
@@ -454,10 +479,10 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
     /// Post contract execution hook
     async fn post_contract_execution(
         &mut self,
-        _: &ContractCaller<'a>,
+        caller: &ContractCaller<'a>,
         _: &Hash,
     ) -> Result<(),  anyhow::Error> {
-        self.on_post_execution().await
+        self.on_post_execution(caller.get_hash().as_ref()).await
     }
 }
 

@@ -19,8 +19,6 @@ use crate::{
     transaction::{tests::MockChainState, verify::BlockchainContractState}
 };
 
-pub mod mock;
-
 mod gas;
 mod events;
 

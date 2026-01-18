@@ -55,7 +55,7 @@ pub enum ContractCaller<'a> {
     // to simulate a TX hash for logs and tracking
     // Second hash is the contract hash
     Scheduled(Cow<'a, Hash>, Cow<'a, Hash>),
-    // contract from which the event is, actual contract being invoked
+    // actual caller that initiated these events, contract from which the event is
     EventCallback(Cow<'a, Hash>, Cow<'a, Hash>),
     // Invoked by the system (no specific caller)
     System,
