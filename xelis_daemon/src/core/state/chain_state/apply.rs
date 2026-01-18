@@ -689,7 +689,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             block_hash: self.block_hash,
             block: self.block,
             caller,
-            outputs: Vec::new(),
+            logs: Vec::new(),
             // Event trackers
             tracker: self.contract_manager.tracker.clone(),
             // Assets cache owned by this contract
