@@ -10,24 +10,24 @@ use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedBalance, VersionedNonce},
     asset::VersionedAssetData,
-    versioned_type::Versioned,
     block::{Block, BlockVersion, TopoHeight},
     config::{EXTRA_BASE_FEE_BURN_PERCENT, FEE_PER_KB, XELIS_ASSET},
     contract::{
-        Source,
-        ExecutionsManager,
-        ExecutionsChanges,
         AssetChanges,
         CallbackEvent,
         ChainState as ContractChainState,
+        ChainStateChanges,
         ContractCache,
         ContractEventTracker,
         ContractLog,
         ContractMetadata,
         ContractModule,
         ContractVersion,
+        ExecutionsChanges,
+        ExecutionsManager,
         InterContractPermission,
         ScheduledExecutionKind,
+        Source,
         vm::{self, ContractCaller, InvokeContract}
     },
     crypto::{Hash, PublicKey, elgamal::Ciphertext},
@@ -45,7 +45,7 @@ use xelis_common::{
         }
     },
     utils::format_xelis,
-    versioned_type::VersionedState
+    versioned_type::{Versioned, VersionedState}
 };
 use xelis_vm::{Environment, ValueCell};
 use crate::core::{
@@ -681,19 +681,19 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             // TODO: only available on non-mainnet networks & enabled by a config
             debug_mode: !mainnet,
             mainnet,
-            // We only provide the current contract cache available
-            // others can be lazily added to it
-            caches: [(contract_hash.as_ref().clone(), cache)].into_iter().collect(),
             entry_contract: contract_hash,
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
             caller,
             logs: Vec::new(),
-            // Event trackers
-            tracker: self.contract_manager.tracker.clone(),
-            // Assets cache owned by this contract
-            assets: self.contract_manager.assets.clone(),
+            changes: ChainStateChanges {
+                // Event trackers
+                tracker: self.contract_manager.tracker.clone(),
+                // Assets cache owned by this contract
+                assets: self.contract_manager.assets.clone(),
+                ..Default::default()
+            },
             modules: self.contract_manager.modules.clone(),
             // Global caches (all contracts)
             global_caches: &self.contract_manager.caches,
@@ -707,10 +707,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
                 changes: Default::default(),
                 allow_executions: true,
             },
-            events: Vec::new(),
-            events_listeners: Default::default(),
             permission,
-            gas_fee: 0,
             gas_fee_allowance: 0,
             environments: Cow::Borrowed(self.inner.environments),
         };
@@ -768,13 +765,10 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
 
     async fn merge_contract_changes(
         &mut self,
-        caches: HashMap<Hash, ContractCache>,
-        tracker: ContractEventTracker,
-        assets: HashMap<Hash, Option<AssetChanges>>,
-        executions: ExecutionsChanges,
-        extra_gas_fee: u64,
+        changes: ChainStateChanges,
+        executions_changes: ExecutionsChanges,
     ) -> Result<(), BlockchainError> {
-        for (contract, mut cache) in caches {
+        for (contract, mut cache) in changes.caches {
             cache.clean_up();
 
             match self.contract_manager.caches.entry(contract) {
@@ -788,17 +782,17 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             };
         }
 
-        self.contract_manager.tracker = tracker;
-        self.contract_manager.assets = assets;
+        self.contract_manager.tracker = changes.tracker;
+        self.contract_manager.assets = changes.assets;
 
-        for (hash, execution) in executions.executions {
+        for (hash, execution) in executions_changes.executions {
             self.contract_manager.executions.executions.insert(hash, execution);
         }
 
-        self.contract_manager.executions.at_topoheight.extend(executions.at_topoheight);
-        self.contract_manager.executions.block_end.extend(executions.block_end);
+        self.contract_manager.executions.at_topoheight.extend(executions_changes.at_topoheight);
+        self.contract_manager.executions.block_end.extend(executions_changes.block_end);
 
-        self.add_gas_fee(extra_gas_fee).await?;
+        self.add_gas_fee(changes.extra_gas_fee).await?;
 
         Ok(())
     }
