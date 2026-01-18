@@ -2506,12 +2506,13 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
     let listeners = state.events_listeners.entry((contract.clone(), event_id))
         .or_insert_with(Default::default);
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, contract.clone());
 
     // Verify if we're already listening to this event
     match listeners.entry(metadata.metadata.contract_executor.clone()) {
         IndexEntry::Occupied(_) => return Ok(Primitive::Boolean(false).into()),
         IndexEntry::Vacant(entry) => {
+            let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+
             // Event is already registered in our cache
             if !cache.events_listeners.insert((contract.clone(), event_id)) {
                 return Ok(Primitive::Boolean(false).into());
