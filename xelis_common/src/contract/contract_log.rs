@@ -89,7 +89,15 @@ pub enum ContractLog {
         /// The payload sent with the transfer
         payload: ValueCell,
     },
+    // Exit error returned by the Contract
     ExitError(ExitError),
+    // Emit event called
+    Event {
+        // Contract hash
+        contract: Hash,
+        // Event id
+        event_id: u64,
+    }
 }
 
 impl Serializer for ContractLog {
@@ -164,6 +172,11 @@ impl Serializer for ContractLog {
                 writer.write_u8(12);
                 err.write(writer);
             },
+            ContractLog::Event { contract, event_id } => {
+                writer.write_u8(13);
+                contract.write(writer);
+                event_id.write(writer);
+            },
         }
     }
 
@@ -231,6 +244,11 @@ impl Serializer for ContractLog {
                 let err = ExitError::read(reader)?;
                 ContractLog::ExitError(err)
             },
+            13 => {
+                let contract = Hash::read(reader)?;
+                let event_id = u64::read(reader)?;
+                ContractLog::Event { contract, event_id }
+            },
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -250,6 +268,7 @@ impl Serializer for ContractLog {
             ContractLog::ExitPayload(payload) => payload.size(),
             ContractLog::TransferPayload { contract, amount, asset, destination, payload } => contract.size() + amount.size() + asset.size() + destination.size() + payload.size(),
             ContractLog::ExitError(err) => err.size(),
+            ContractLog::Event { contract, event_id } => contract.size() + event_id.size(),
         }
     }
 }

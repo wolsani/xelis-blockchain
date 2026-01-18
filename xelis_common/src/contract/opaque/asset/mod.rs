@@ -283,7 +283,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     record_balance_credit(provider, state, metadata.metadata.contract_executor.clone(), asset.hash.clone(), amount).await?;
 
     // Add to outputs
-    state.outputs.push(ContractLog::Mint {
+    state.logs.push(ContractLog::Mint {
         contract: metadata.metadata.contract_executor.clone(),
         asset: asset.hash.clone(),
         amount,

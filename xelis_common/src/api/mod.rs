@@ -302,6 +302,10 @@ pub enum RPCContractLog<'a> {
     ExitError {
         err: Cow<'a, ExitError>,
     },
+    Event {
+        contract: Cow<'a, Hash>,
+        event_id: u64,
+    }
 }
 
 impl<'a> RPCContractLog<'a> {
@@ -351,6 +355,10 @@ impl<'a> RPCContractLog<'a> {
                 payload: Cow::Owned(payload)
             },
             ContractLog::ExitError(err) => RPCContractLog::ExitError { err: Cow::Owned(err) },
+            ContractLog::Event { contract, event_id } => RPCContractLog::Event {
+                contract: Cow::Owned(contract),
+                event_id
+            }
         }
     }
 
@@ -400,6 +408,10 @@ impl<'a> RPCContractLog<'a> {
                 payload: Cow::Borrowed(payload)
             },
             ContractLog::ExitError(err) => RPCContractLog::ExitError { err: Cow::Borrowed(err) },
+            ContractLog::Event { contract, event_id } => RPCContractLog::Event {
+                contract: Cow::Borrowed(contract),
+                event_id: *event_id
+            }
         }
     }
 }
@@ -453,6 +465,10 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 payload: payload.into_owned()
             },
             RPCContractLog::ExitError { err } => ContractLog::ExitError(err.into_owned()),
+            RPCContractLog::Event { contract, event_id } => ContractLog::Event {
+                contract: contract.into_owned(),
+                event_id
+            }
         }
     }
 }

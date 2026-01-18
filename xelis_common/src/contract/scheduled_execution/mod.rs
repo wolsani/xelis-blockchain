@@ -252,7 +252,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    state.outputs.push(ContractLog::ScheduledExecution {
+    state.logs.push(ContractLog::ScheduledExecution {
         contract: metadata.metadata.contract_executor.clone(),
         hash: hash.clone(),
         kind: match kind {

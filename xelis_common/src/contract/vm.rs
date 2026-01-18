@@ -296,7 +296,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
     let is_success = exit_value.is_success();
     // If the contract execution was successful, we need to merge the cache
-    let mut outputs = chain_state.outputs;
+    let mut outputs = chain_state.logs;
 
     let gas_injections = chain_state.injected_gas;
     let modules = chain_state.modules;

@@ -993,7 +993,7 @@ impl<'a> BlockchainContractState<'a, MockProvider,  anyhow::Error> for MockChain
             block_hash: &self.block_hash,
             block: &self.block,
             caller,
-            outputs: Vec::new(),
+            logs: Vec::new(),
             tracker: ContractEventTracker::default(),
             // Global caches (all contracts)
             global_caches: &mut self.global_caches,

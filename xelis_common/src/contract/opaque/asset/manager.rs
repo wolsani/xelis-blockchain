@@ -167,7 +167,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
             .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
-    state.outputs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
+    state.logs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
 
     let asset = Asset {
         hash: asset_hash
