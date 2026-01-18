@@ -1,3 +1,5 @@
+use crate::contract::ContractLog;
+
 use super::*;
 
 #[tokio::test]
@@ -24,7 +26,7 @@ async fn contract_event_flow() {
 
         hook constructor() -> u64 {
             let contract = Hash::from_hex("CONTRACT_HASH");
-            listen_event(contract, 0, on_contract_event, 500);
+            listen_event(contract, 42, on_contract_event, 500);
             
             return 0
         }
@@ -34,7 +36,6 @@ async fn contract_event_flow() {
     deploy_contract(&mut chain_state, &code).await
         .expect("deploy listener contract");
 
-    println!("Invoking emitter contract {}...", emitter_hash);
     // Invoke the emitter contract to trigger the event
     invoke_contract(
         &mut chain_state,
@@ -43,10 +44,21 @@ async fn contract_event_flow() {
         vec![],
     ).await.expect("invoke emitter contract");
 
+    let mut executions = 0;
     for (caller, logs) in chain_state.contract_logs {
         println!("Logs for contract caller {}:", caller);
         for log in logs {
-            println!("  {:?}", log);
+            match log {
+                ContractLog::ExitCode(Some(0)) => {
+                    executions += 1;
+                },
+                _ => {},
+            }
         }
     }
+
+    // - constructor execution
+    // - call_event execution
+    // - on_contract_event execution
+    assert_eq!(executions, 3);
 }

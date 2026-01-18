@@ -62,7 +62,7 @@ pub async fn deploy_contract(state: &mut MockChainState, code: &str) -> anyhow::
         None,
         std::iter::empty(),
         IndexMap::new(),
-        u64::MAX,
+        100000,
         InvokeContract::Hook(0),
         Cow::Owned(Default::default()),
         true,

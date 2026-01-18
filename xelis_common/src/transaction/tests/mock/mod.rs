@@ -114,21 +114,24 @@ impl MockChainState {
             let contract_key = (event.contract.clone(), event.event_id);
             if let Some(listeners) = self.events_listeners.remove(&contract_key) {
                 for (contract, callback) in listeners {
-                    if self.load_contract_module(Cow::Owned(contract.clone())).await? {
-                        if let Err(e) = vm::invoke_contract(
-                            ContractCaller::EventCallback(Cow::Owned(caller.clone()), Cow::Owned(event.contract.clone())),
-                            self,
-                            Cow::Owned(contract.clone()),
-                            None,
-                            event.params.iter().map(|p| p.deep_clone()),
-                            Default::default(),
-                            callback.max_gas,
-                            InvokeContract::Chunk(callback.chunk_id, false),
-                            Cow::Owned(InterContractPermission::All),
-                            false,
-                        ).await {
-                            warn!("failed to process execution of contract {} with caller {}: {}", contract, caller, e);
-                        }
+                    if !self.load_contract_module(Cow::Owned(contract.clone())).await? {
+                        // for tests, we directly return an error
+                        return Err(anyhow::anyhow!("contract module {} not found for event callback", contract));
+                    }
+
+                    if let Err(e) = vm::invoke_contract(
+                        ContractCaller::EventCallback(Cow::Owned(caller.clone()), Cow::Owned(event.contract.clone())),
+                        self,
+                        Cow::Owned(contract.clone()),
+                        None,
+                        event.params.iter().map(|p| p.deep_clone()),
+                        Default::default(),
+                        callback.max_gas,
+                        InvokeContract::Chunk(callback.chunk_id, false),
+                        Cow::Owned(InterContractPermission::All),
+                        false,
+                    ).await {
+                        warn!("failed to process execution of contract {} with caller {}: {}", contract, caller, e);
                     }
                 }
             }
@@ -314,7 +317,14 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
         logs: Vec<ContractLog>,
     ) -> Result<(),  anyhow::Error> {
         let hash = caller.get_hash().into_owned();
-        self.contract_logs.insert(hash, logs);
+        match self.contract_logs.entry(hash) {
+            Entry::Occupied(mut o) => {
+                o.get_mut().extend(logs);
+            },
+            Entry::Vacant(e) => {
+                e.insert(logs);
+            }
+        };
         Ok(())
     }
 
