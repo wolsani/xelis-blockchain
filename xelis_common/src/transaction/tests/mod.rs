@@ -1,33 +1,16 @@
-use std::{borrow::Cow, collections::HashMap, collections::hash_map::Entry, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use anyhow::Context;
 use async_trait::async_trait;
-use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, Scalar};
-use indexmap::{IndexMap, IndexSet};
-use xelis_builder::EnvironmentBuilder;
-use xelis_vm::{Chunk, Environment, Module};
+use curve25519_dalek::Scalar;
+use indexmap::IndexSet;
+use xelis_vm::{Chunk, Module};
 use crate::{
     account::{CiphertextCache, Nonce},
     api::{DataElement, DataValue},
-    block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
-    contract::{
-        AssetChanges,
-        ChainState as ContractChainState,
-        ExecutionsManager,
-        ExecutionsChanges,
-        ContractCache,
-        ContractEventTracker,
-        ContractLog,
-        ContractMetadata,
-        ContractModule,
-        ContractVersion,
-        InterContractPermission,
-        build_environment,
-        tests::MockProvider,
-        vm::ContractCaller
-    },
+    contract::ContractModule,
     crypto::{
-        elgamal::{Ciphertext, CompressedPublicKey, PedersenOpening},
+        elgamal::{Ciphertext, PedersenOpening},
         proofs::{G, ProofVerificationError},
         Address,
         Hash,
@@ -54,9 +37,8 @@ use crate::{
             derive_shared_key_from_opening,
             PlaintextData
         },
-        verify::{BlockchainApplyState, BlockchainContractState, BlockchainVerificationState, ContractEnvironment, NoZKPCache, VerificationError, ZKPCache},
+        verify::{NoZKPCache, VerificationError, ZKPCache},
         BurnPayload,
-        ContractDeposit,
         MultiSigPayload,
         Reference,
         Role,
@@ -65,105 +47,11 @@ use crate::{
         TxVersion,
         MAX_TRANSFER_COUNT
     },
-    versioned_type::VersionedState
 };
 
-#[derive(Debug, Clone)]
-pub struct AccountChainState {
-    pub balances: HashMap<Hash, Ciphertext>,
-    pub nonce: Nonce,
-}
+mod mock;
 
-#[derive(Debug, Clone)]
-pub struct MockChainState {
-    pub accounts: HashMap<PublicKey, AccountChainState>,
-    pub multisig: HashMap<PublicKey, MultiSigPayload>,
-    pub contracts: HashMap<Hash, ContractModule>,
-    pub contract_balances: HashMap<Hash, HashMap<Hash, (VersionedState, u64)>>,
-    pub contract_logs: HashMap<Hash, Vec<ContractLog>>,
-    pub burned_coins: HashMap<Hash, u64>,
-    pub gas_fee: u64,
-    pub burned_fee: u64,
-    pub env: Arc<EnvironmentBuilder<'static, ContractMetadata>>,
-    pub provider: MockProvider,
-    pub mainnet: bool,
-    pub block_hash: Hash,
-    pub block: Block,
-    pub global_caches: HashMap<Hash, ContractCache>,
-    pub executions: ExecutionsChanges,
-}
-
-impl MockChainState {
-    pub fn new() -> Self {
-        let header = BlockHeader::new(
-            BlockVersion::V3,
-            0,
-            0,
-            IndexSet::new(),
-            [0u8; EXTRA_NONCE_SIZE],
-            CompressedPublicKey::new(CompressedRistretto::identity()),
-            IndexSet::new(),
-        );
-
-        Self {
-            accounts: HashMap::new(),
-            multisig: HashMap::new(),
-            contracts: HashMap::new(),
-            contract_balances: HashMap::new(),
-            contract_logs: HashMap::new(),
-            burned_coins: HashMap::new(),
-            gas_fee: 0,
-            burned_fee: 0,
-            env: Arc::new(build_environment::<MockProvider>(ContractVersion::V1)),
-            provider: MockProvider::default(),
-            mainnet: false,
-            block_hash: Hash::zero(),
-            block: Block::new(header, Vec::new()),
-            global_caches: HashMap::new(),
-            executions: ExecutionsChanges::default(),
-        }
-    }
-
-    pub fn set_contract_balance(&mut self, contract: &Hash, asset: &Hash, new_balance: u64) {
-        let balances = self.contract_balances.entry(contract.clone())
-            .or_insert_with(HashMap::new);
-
-        match balances.entry(asset.clone()) {
-            Entry::Occupied(mut o) => {
-                let (state, balance) = o.get_mut();
-                *balance = new_balance;
-                state.mark_updated();
-            }
-            Entry::Vacant(v) => {
-                v.insert((VersionedState::New, new_balance));
-            }
-        }
-    }
-
-    pub fn get_contract_balance(&self, contract: &Hash, asset: &Hash) -> u64 {
-        self.contract_balances.get(contract)
-            .and_then(|balances| balances.get(asset))
-            .map(|(_, balance)| *balance)
-            .unwrap_or_default()
-    }
-
-    pub fn set_account_balance(&mut self, account: &PublicKey, asset: &Hash, balance: Ciphertext) {
-        let acct_state = self.accounts.entry(account.clone())
-            .or_insert_with(|| AccountChainState {
-                balances: HashMap::new(),
-                nonce: 0,
-            });
-
-        acct_state.balances.insert(asset.clone(), balance);
-    }
-
-    pub fn get_account_balance(&self, account: &PublicKey, asset: &Hash) -> Ciphertext {
-        self.accounts.get(account)
-            .and_then(|state| state.balances.get(asset))
-            .cloned()
-            .unwrap_or_else(|| Ciphertext::zero())
-    }
-}
+pub use mock::*;
 
 #[derive(Clone)]
 pub struct Balance {
@@ -311,7 +199,7 @@ async fn test_tx_verify() {
         for (asset, balance) in &alice.balances {
             balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -322,7 +210,7 @@ async fn test_tx_verify() {
         for (asset, balance) in &bob.balances {
             balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
         }
-        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -359,7 +247,7 @@ async fn test_tx_verify_with_zkp_cache() {
         for (asset, balance) in &alice.balances {
             balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -370,7 +258,7 @@ async fn test_tx_verify_with_zkp_cache() {
         for (asset, balance) in &bob.balances {
             balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
         }
-        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -440,7 +328,7 @@ async fn test_burn_tx_verify() {
         for (asset, balance) in &alice.balances {
             balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -503,7 +391,7 @@ async fn test_tx_invoke_contract() {
         for (asset, balance) in &alice.balances {
             balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -575,7 +463,7 @@ async fn test_tx_deploy_contract() {
         for (asset, balance) in &alice.balances {
             balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -640,7 +528,7 @@ async fn test_max_transfers() {
         for (asset, balance) in alice.balances {
             balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -652,7 +540,7 @@ async fn test_max_transfers() {
         for (asset, balance) in bob.balances {
             balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
         }
-        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -701,7 +589,7 @@ async fn test_multisig_setup() {
         for (asset, balance) in alice.balances {
             balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -712,7 +600,7 @@ async fn test_multisig_setup() {
         for (asset, balance) in bob.balances {
             balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
         }
-        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -771,7 +659,7 @@ async fn test_multisig() {
         for (asset, balance) in alice.balances {
             balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
         }
-        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -784,7 +672,7 @@ async fn test_multisig() {
             balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
         }
 
-        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
             balances,
             nonce: alice.nonce,
         });
@@ -797,294 +685,6 @@ async fn test_multisig() {
 
     let hash = tx.hash();
     tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
-}
-
-#[async_trait]
-impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
-    /// Left over fee to pay back
-    async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, _: &Hash) -> Result<u64,  anyhow::Error> {
-        Ok(tx.get_fee_limit() - tx.get_fee())
-    }
-
-    /// Pre-verify the TX
-    async fn pre_verify_tx<'b>(
-        &'b mut self,
-        _: &Transaction,
-    ) -> Result<(),  anyhow::Error> {
-        Ok(())
-    }
-
-    /// Get the balance ciphertext for a receiver account
-    async fn get_receiver_balance<'b>(
-        &'b mut self,
-        account: Cow<'a, PublicKey>,
-        asset: Cow<'a, Hash>,
-    ) -> Result<&'b mut Ciphertext,  anyhow::Error> {
-        self.accounts.get_mut(&account)
-            .and_then(|account| account.balances.get_mut(&asset))
-            .context("Receiver account or balance not found")
-    }
-
-    /// Get the balance ciphertext used for verification of funds for the sender account
-    async fn get_sender_balance<'b>(
-        &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
-        _: &Reference,
-    ) -> Result<&'b mut Ciphertext,  anyhow::Error> {
-        self.accounts.get_mut(account)
-            .and_then(|account| account.balances.get_mut(asset))
-            .context("Sender account or balance not found")
-    }
-
-    /// Apply new output to a sender account
-    async fn add_sender_output(
-        &mut self,
-        _: &'a PublicKey,
-        _: &'a Hash,
-        _: Ciphertext,
-    ) -> Result<(),  anyhow::Error> {
-        Ok(())
-    }
-
-    /// Get the nonce of an account
-    async fn get_account_nonce(
-        &mut self,
-        account: &'a PublicKey
-    ) -> Result<Nonce,  anyhow::Error> {
-        self.accounts.get(account)
-            .map(|account| account.nonce)
-            .context("Account not found")
-    }
-
-    /// Apply a new nonce to an account
-    async fn update_account_nonce(
-        &mut self,
-        account: &'a PublicKey,
-        new_nonce: Nonce
-    ) -> Result<(),  anyhow::Error> {
-        self.accounts.get_mut(account)
-            .map(|account| account.nonce = new_nonce)
-            .context("Account not found")
-    }
-
-    fn get_block_version(&self) -> BlockVersion {
-        BlockVersion::V0
-    }
-
-    async fn set_multisig_state(
-        &mut self,
-        account: &'a PublicKey,
-        multisig: &MultiSigPayload
-    ) -> Result<(),  anyhow::Error> {
-        self.multisig.insert(account.clone(), multisig.clone());
-        Ok(())
-    }
-
-    async fn get_multisig_state(
-        &mut self,
-        account: &'a PublicKey
-    ) -> Result<Option<&MultiSigPayload>,  anyhow::Error> {
-        Ok(self.multisig.get(account))
-    }
-
-    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>,  anyhow::Error> {
-        Ok(self.env.environment())
-    }
-
-    async fn set_contract_module(
-        &mut self,
-        hash: &'a Hash,
-        module: &'a ContractModule,
-    ) -> Result<(),  anyhow::Error> {
-        self.contracts.insert(hash.clone(), module.clone());
-        Ok(())
-    }
-
-    async fn load_contract_module(
-        &mut self,
-        hash: Cow<'a, Hash>
-    ) -> Result<bool,  anyhow::Error> {
-        Ok(self.contracts.contains_key(&hash))
-    }
-
-    async fn get_contract_module_with_environment(
-        &self,
-        contract: &'a Hash
-    ) -> Result<(&Module, &Environment<ContractMetadata>),  anyhow::Error> {
-        let module = self.contracts.get(contract)
-            .context("Contract module not found")?;
-        Ok((&module.module, self.env.environment()))
-    }
-}
-
-#[async_trait]
-impl<'a> BlockchainContractState<'a, MockProvider,  anyhow::Error> for MockChainState {
-    async fn set_contract_logs(
-        &mut self,
-        caller: ContractCaller<'a>,
-        logs: Vec<ContractLog>,
-    ) -> Result<(),  anyhow::Error> {
-        let hash = caller.get_hash().into_owned();
-        self.contract_logs.insert(hash, logs);
-        Ok(())
-    }
-
-    async fn get_contract_environment_for<'b>(
-        &'b mut self,
-        contract: Cow<'b, Hash>,
-        deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
-        caller: ContractCaller<'b>,
-        permission: Cow<'b, InterContractPermission>,
-    ) -> Result<(ContractEnvironment<'b, MockProvider>, crate::contract::ChainState<'b>),  anyhow::Error> {
-        // Get the contract module
-        let contract_module = self.contracts.get(&contract)
-            .context("Contract module not found")?;
-        
-        // Find the contract cache in our cache map
-        let mut cache = self.global_caches.get(&contract)
-            .cloned()
-            .unwrap_or_default();
-
-        // We need to add the deposits to the balances
-        if let Some(deposits) = deposits {
-            for (asset, deposit) in deposits.iter() {
-                match deposit {
-                    ContractDeposit::Public(amount) => match cache.balances.entry(asset.clone()) {
-                        Entry::Occupied(mut o) => match o.get_mut() {
-                            Some((state, balance)) => {
-                                state.mark_updated();
-                                *balance += amount;
-                            },
-                            None => {
-                                // Balance was already fetched and we didn't had any balance before
-                                o.insert(Some((VersionedState::New, *amount)));
-                            }
-                        },
-                        Entry::Vacant(e) => {
-                            // In tests, we don't have storage, so we start with 0 balance
-                            e.insert(Some((VersionedState::New, *amount)));
-                        }
-                    },
-                    ContractDeposit::Private { .. } => {
-                        // TODO: we need to add the private deposit to the balance
-                    }
-                }
-            }
-        }
-        
-        // Create the contract environment
-        let environment = ContractEnvironment {
-            environment: &self.env.environment(),
-            module: &contract_module.module,
-            version: contract_module.version,
-            provider: &self.provider,
-        };
-
-        // Create the chain state using stored references
-        let chain_state = ContractChainState {
-            debug_mode: false,
-            mainnet: self.mainnet,
-            // We only provide the current contract cache available
-            // others can be lazily added to it
-            caches: [(contract.as_ref().clone(), cache)].into_iter().collect(),
-            entry_contract: contract,
-            topoheight: 1,
-            block_hash: &self.block_hash,
-            block: &self.block,
-            caller,
-            logs: Vec::new(),
-            tracker: ContractEventTracker::default(),
-            // Global caches (all contracts)
-            global_caches: &mut self.global_caches,
-            assets: HashMap::new(),
-            modules: HashMap::new(),
-            injected_gas: indexmap::IndexMap::new(),
-            executions: ExecutionsManager {
-                allow_executions: true,
-                global_executions: &self.executions.executions,
-                changes: Default::default(),
-            },
-            events: Default::default(),
-            events_listeners: Default::default(),
-            permission,
-            gas_fee: 0,
-            gas_fee_allowance: 0,
-            environments: Cow::Owned(HashMap::new()),
-        };
-
-        Ok((environment, chain_state))
-    }
-
-    async fn set_modules_cache(
-        &mut self,
-        _modules: HashMap<Hash, Option<ContractModule>>,
-    ) -> Result<(),  anyhow::Error> {
-        // In tests, we don't need to track module cache updates
-        Ok(())
-    }
-
-    async fn merge_contract_changes(
-        &mut self,
-        _caches: HashMap<Hash, ContractCache>,
-        _tracker: ContractEventTracker,
-        _assets: HashMap<Hash, Option<AssetChanges>>,
-        _executions: ExecutionsChanges,
-        extra_gas_fee: u64,
-    ) -> Result<(),  anyhow::Error> {
-        // TODO: persist changes in the chain state
-
-        self.add_gas_fee(extra_gas_fee).await
-    }
-
-    async fn get_contract_balance_for_gas<'b>(
-        &'b mut self,
-        contract: &'b Hash,
-    ) -> Result<&'b mut (VersionedState, u64),  anyhow::Error> {
-        Ok(self.contract_balances
-            .entry(contract.clone())
-            .or_insert_with(HashMap::new)
-            .entry(XELIS_ASSET)
-            .or_insert((VersionedState::New, 0)))
-    }
-
-    async fn remove_contract_module(&mut self, hash: &'a Hash) -> Result<(),  anyhow::Error> {
-        self.contracts.remove(hash);
-        Ok(())
-    }
-
-
-    /// Post contract execution hook
-    async fn post_contract_execution(
-        &mut self,
-        _: &ContractCaller<'a>,
-        _: &Hash,
-    ) -> Result<(),  anyhow::Error> {
-        // For tests, we don't need to do anything
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl<'a> BlockchainApplyState<'a, MockProvider,  anyhow::Error> for MockChainState {
-    async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(),  anyhow::Error> {
-        *self.burned_coins.entry(asset.clone()).or_insert(0) += amount;
-        Ok(())
-    }
-
-    async fn add_gas_fee(&mut self, amount: u64) -> Result<(),  anyhow::Error> {
-        self.gas_fee += amount;
-        Ok(())
-    }
-
-    async fn add_burned_fee(&mut self, amount: u64) -> Result<(),  anyhow::Error> {
-        self.burned_fee += amount;
-        Ok(())
-    }
-
-    fn is_mainnet(&self) -> bool {
-        self.mainnet
-    }
 }
 
 impl FeeHelper for AccountStateImpl {

@@ -11,12 +11,12 @@ use rand::{
 use xelis_vm::Module;
 
 use crate::{
-    contract::{ContractModule, ContractVersion, tests::*, vm::ContractCaller},
-    crypto::Hash, transaction::{tests::MockChainState, verify::BlockchainContractState}
+    contract::{ContractModule, ContractVersion, vm::ContractCaller},
+    crypto::Hash, transaction::{tests::{MockChainState, MockStorageProvider}, verify::BlockchainContractState}
 };
 
 async fn insert_key(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     store: &OpaqueBTreeStore,
@@ -30,7 +30,7 @@ async fn insert_key(
 }
 
 async fn find_key(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     store: &OpaqueBTreeStore,
@@ -43,7 +43,7 @@ async fn find_key(
 }
 
 async fn delete_key(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     store: &OpaqueBTreeStore,
@@ -56,7 +56,7 @@ async fn delete_key(
 }
 
 async fn seek_node(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     store: &OpaqueBTreeStore,
@@ -70,7 +70,7 @@ async fn seek_node(
 }
 
 async fn read_node(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -83,7 +83,7 @@ async fn read_node(
 }
 
 async fn read_root_id(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -95,7 +95,7 @@ async fn read_root_id(
 }
 
 async fn successor(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -108,7 +108,7 @@ async fn successor(
 }
 
 async fn find_min_node(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -122,7 +122,7 @@ async fn find_min_node(
 
 async fn refresh_cursor_cache(
     cursor: &mut OpaqueBTreeCursor,
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
 ) -> Result<(), EnvironmentError> {
     let contract = cursor.contract.clone();
@@ -134,7 +134,7 @@ async fn refresh_cursor_cache(
 }
 
 async fn allocate_node_id(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -146,7 +146,7 @@ async fn allocate_node_id(
 }
 
 async fn read_next_id(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -174,7 +174,7 @@ fn btree_header_matches_full_node_layout() {
 #[tokio::test]
 async fn btree_insert_get_delete_roundtrip() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -206,7 +206,7 @@ async fn btree_insert_get_delete_roundtrip() {
 #[tokio::test]
 async fn btree_seek_biases_work() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -245,7 +245,7 @@ async fn btree_seek_biases_work() {
 #[tokio::test]
 async fn btree_cursor_iteration_matches_ordering() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -292,7 +292,7 @@ async fn btree_cursor_iteration_matches_ordering() {
 #[tokio::test]
 async fn btree_cursor_scans_random_u64s_in_order() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -369,7 +369,7 @@ async fn btree_cursor_scans_random_u64s_in_order() {
 #[tokio::test]
 async fn btree_allows_duplicate_keys_and_ordered_traversal() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -418,7 +418,7 @@ async fn btree_allows_duplicate_keys_and_ordered_traversal() {
 #[tokio::test]
 async fn btree_cursor_scans_duplicate_bucket() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -487,7 +487,7 @@ async fn btree_cursor_scans_duplicate_bucket() {
 #[tokio::test]
 async fn btree_delete_root_with_two_children_promotes_successor() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -547,7 +547,7 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
 #[tokio::test]
 async fn btree_seek_handles_missing_key_biases() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -602,7 +602,7 @@ async fn btree_seek_equal_strict_bias_uses_ancestors() {
     //   - key==30, Greater -> None
     //   - key==10, Less    -> None
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -676,7 +676,7 @@ async fn btree_seek_equal_strict_bias_uses_ancestors() {
 #[tokio::test]
 async fn btree_cursor_key_value_and_exhaustion() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -743,7 +743,7 @@ async fn btree_cursor_key_value_and_exhaustion() {
 #[tokio::test]
 async fn btree_cursor_allows_deleting_during_scan() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -812,7 +812,7 @@ async fn btree_cursor_allows_deleting_during_scan() {
 #[tokio::test]
 async fn btree_cursor_selective_delete_during_scan() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -910,7 +910,7 @@ async fn btree_cursor_selective_delete_during_scan() {
 #[tokio::test]
 async fn btree_cursor_descends_and_deletes() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -993,7 +993,7 @@ async fn btree_cursor_descends_and_deletes() {
 #[tokio::test]
 async fn btree_cursor_consecutive_deletes() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1066,7 +1066,7 @@ async fn btree_cursor_consecutive_deletes() {
 #[tokio::test]
 async fn btree_cursor_exhausts_tree() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1137,7 +1137,7 @@ async fn btree_cursor_exhausts_tree() {
 }
 
 async fn collect_values_in_order(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -1161,7 +1161,7 @@ async fn collect_values_in_order(
 #[tokio::test]
 async fn btree_insert_duplicate_allocates_new_node() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1219,7 +1219,7 @@ async fn btree_insert_duplicate_allocates_new_node() {
 #[tokio::test]
 async fn btree_delete_variants_cover_storage_cleanup() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1290,7 +1290,7 @@ async fn btree_delete_variants_cover_storage_cleanup() {
 #[tokio::test]
 async fn btree_cursor_cache_refresh_tracks_state() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1352,7 +1352,7 @@ async fn btree_cursor_cache_refresh_tracks_state() {
 #[tokio::test]
 async fn btree_cursor_detects_stale_value_update() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1429,7 +1429,7 @@ async fn btree_cursor_detects_stale_value_update() {
 #[tokio::test]
 async fn btree_cache_prefetch_reads_values() {
     let contract = Hash::zero();
-    let mut provider = MockProvider::default();
+    let mut provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1460,7 +1460,7 @@ async fn btree_cache_prefetch_reads_values() {
 #[tokio::test]
 async fn btree_seek_empty_and_bounds() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1514,7 +1514,7 @@ async fn btree_seek_empty_and_bounds() {
 #[tokio::test]
 async fn btree_seek_first_last_works() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1556,7 +1556,7 @@ async fn btree_seek_first_last_works() {
 #[tokio::test]
 async fn btree_namespace_isolation() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1622,7 +1622,7 @@ async fn btree_key_value_constraints_reject_invalid_inputs() {
 #[tokio::test]
 async fn btree_allocate_node_id_monotonic_per_namespace() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1647,7 +1647,7 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
 #[tokio::test]
 async fn btree_storage_usage_records_reads() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1674,7 +1674,7 @@ async fn btree_storage_usage_records_reads() {
 #[tokio::test]
 async fn btree_storage_usage_records_writes() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1700,7 +1700,7 @@ async fn btree_storage_usage_records_writes() {
 #[tokio::test]
 async fn btree_storage_usage_single_insert_reports_activity() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1726,7 +1726,7 @@ async fn btree_storage_usage_single_insert_reports_activity() {
 #[tokio::test]
 async fn btree_storage_usage_delete_reports_activity() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1762,7 +1762,7 @@ async fn btree_storage_usage_delete_reports_activity() {
 // --- helpers specific to new tests ---
 
 async fn read_size(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -1776,7 +1776,7 @@ async fn read_size(
 #[tokio::test]
 async fn btree_len_tracks_insert_and_delete() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1825,7 +1825,7 @@ async fn btree_len_tracks_insert_and_delete() {
 }
 
 async fn predecessor(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -1838,7 +1838,7 @@ async fn predecessor(
 }
 
 async fn btree_assert_treap_invariants(
-    provider: &MockProvider,
+    provider: &MockStorageProvider,
     state: &mut ChainState<'_>,
     contract: &Hash,
     namespace: &[u8],
@@ -1882,7 +1882,7 @@ async fn btree_treap_invariants_after_random_inserts_and_deletes() {
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1923,7 +1923,7 @@ async fn btree_treap_invariants_after_random_inserts_and_deletes() {
 #[tokio::test]
 async fn btree_treap_rotate_left_at_root_updates_links() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -1975,7 +1975,7 @@ async fn btree_treap_rotate_left_at_root_updates_links() {
 async fn btree_treap_rotate_right_under_parent_updates_links() {
     // Force a right rotation on the left child of the root and ensure parent links are updated.
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -2031,7 +2031,7 @@ async fn btree_treap_rotate_right_under_parent_updates_links() {
 #[tokio::test]
 async fn btree_treap_seek_with_duplicates_bias_matrix() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
@@ -2072,7 +2072,7 @@ async fn btree_treap_seek_with_duplicates_bias_matrix() {
 #[tokio::test]
 async fn btree_treap_predecessor_through_duplicate_bucket() {
     let contract = Hash::zero();
-    let provider = MockProvider::default();
+    let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
     chain.contracts.insert(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),

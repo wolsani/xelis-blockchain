@@ -1,413 +1,262 @@
-mod contract;
-
-use std::{collections::HashMap};
-
-use async_trait::async_trait;
-use curve25519_dalek::Scalar;
+use std::{borrow::Cow, sync::Arc};
 use indexmap::IndexMap;
-use xelis_vm::ValueCell;
+
+use xelis_builder::EnvironmentBuilder;
+use xelis_compiler::Compiler;
+use xelis_lexer::Lexer;
+use xelis_parser::Parser;
+use xelis_vm::{Module, Primitive, ValueCell};
 
 use crate::{
-    block::*,
-    config::XELIS_ASSET,
+    config::TX_GAS_BURN_PERCENT,
     contract::{
+        ContractMetadata,
         ContractModule,
-        ContractProvider,
-        ContractStorage,
+        Source,
+        vm::{self, ContractCaller, ContractError, InvokeContract}
     },
-    crypto::{
-        Hash,
-        proofs::G
-    },
-    transaction::{
-        tests::{AccountChainState, MockChainState},
-        verify::{BlockchainApplyState, BlockchainContractState}
-    },
-    versioned_type::VersionedState
+    crypto::Hash,
+    transaction::{tests::MockChainState, verify::BlockchainContractState}
 };
 
-pub use contract::*;
+pub mod mock;
 
-#[derive(Debug, Default, Clone)]
-pub struct MockProvider {
-    pub data: HashMap<(Hash, ValueCell), (TopoHeight, Option<ValueCell>)>,
+mod gas;
+mod events;
+
+/// Compiles the given contract code into a Module
+pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code: &str) -> anyhow::Result<Module> {
+    let tokens = Lexer::new(code)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let parser = Parser::with(tokens.into_iter(), &environment);
+    let (program, _) = parser.parse()
+        .expect("contract code");
+
+    let compiler = Compiler::new(&program, environment.environment());
+    let module = compiler.compile()?;
+
+    Ok(module)
 }
 
-#[async_trait]
-impl ContractStorage for MockProvider {
-    async fn load_data(&self, contract: &Hash, key: &ValueCell, _: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error> {
-        Ok(self.data.get(&(contract.clone(), key.clone())).cloned())
-    }
+/// Creates a contract in the given chain state without invoking its constructor
+pub fn create_contract(state: &mut MockChainState, code: &str) -> anyhow::Result<Hash> {
+    let module = compile_contract(&state.env, code)?;
 
-    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, _: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error> {
-        Ok(self.data.get(&(contract.clone(), key.clone())).map(|(topo, _)| *topo))
-    }
+    let hash = Hash::new(rand::random());
+    state.contracts.insert(hash.clone(), ContractModule {
+        version: Default::default(),
+        module: Arc::new(module.clone()),
+    });
 
-    async fn has_contract(&self, contract: &Hash, _: TopoHeight) -> Result<bool, anyhow::Error> {
-        Ok(self.data.keys().any(|(c, _)| c == contract))
-    }
+    Ok(hash)
 }
 
-#[async_trait]
-impl ContractProvider for MockProvider {
-    async fn get_contract_balance_for_asset(&self, _: &Hash, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
-        Ok(None)
-    }
+/// Deploys a contract by creating it and invoking its constructor (hook 0)
+pub async fn deploy_contract(state: &mut MockChainState, code: &str) -> anyhow::Result<Hash> {
+    let contract_hash = create_contract(state, code)?;
 
-    async fn get_account_balance_for_asset(&self, _: &crate::crypto::PublicKey, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, crate::account::CiphertextCache)>, anyhow::Error> {
-        Ok(None)
-    }
+    vm::invoke_contract(
+        ContractCaller::System,
+        state,
+        Cow::Owned(contract_hash.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        u64::MAX,
+        InvokeContract::Hook(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await.expect("deploy contract");
 
-    async fn has_scheduled_execution_at_topoheight(&self, _: &Hash, _: TopoHeight) -> Result<bool, anyhow::Error> {
-        Ok(false)
-    }
-
-    async fn asset_exists(&self, _: &Hash, _: TopoHeight) -> Result<bool, anyhow::Error> {
-        Ok(false)
-    }
-
-    async fn load_asset_data(&self, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, crate::asset::AssetData)>, anyhow::Error> {
-        Ok(None)
-    }
-
-    async fn load_asset_circulating_supply(&self, _: &Hash, _: TopoHeight) -> Result<(TopoHeight, u64), anyhow::Error> {
-        Ok((0, 0))
-    }
-
-    async fn account_exists(&self, _: &crate::crypto::PublicKey, _: TopoHeight) -> Result<bool, anyhow::Error> {
-        Ok(false)
-    }
-
-    async fn load_contract_module(&self, _: &Hash, _: TopoHeight) -> Result<Option<ContractModule>, anyhow::Error> {
-        Ok(None)
-    }
-
-    async fn has_contract_callback_for_event(&self, _: &Hash, _: u64, _: &Hash, _: TopoHeight) -> Result<bool, anyhow::Error> {
-        Ok(false)
-    }
+    Ok(contract_hash)
 }
 
-#[tokio::test]
-async fn test_blockchain_apply_state_gas_tracking() {
-    let mut state = MockChainState::new();
-    
-    // Test gas fee tracking
-    state.add_gas_fee(1000).await.unwrap();
-    assert_eq!(state.gas_fee, 1000);
-    
-    state.add_gas_fee(500).await.unwrap();
-    assert_eq!(state.gas_fee, 1500);
-    
-    // Test burned fee tracking
-    state.add_burned_fee(250).await.unwrap();
-    assert_eq!(state.burned_fee, 250);
-    
-    // Test burned coins tracking
-    state.add_burned_coins(&XELIS_ASSET, 100).await.unwrap();
-    assert_eq!(state.burned_coins.get(&XELIS_ASSET), Some(&100));
-    
-    state.add_burned_coins(&XELIS_ASSET, 50).await.unwrap();
-    assert_eq!(state.burned_coins.get(&XELIS_ASSET), Some(&150));
+/// Invokes a contract with the given entry point and parameters
+pub async fn invoke_contract(
+    state: &mut MockChainState,
+    contract: &Hash,
+    entry: InvokeContract,
+    params: Vec<ValueCell>,
+) -> Result<vm::ExecutionResult, ContractError<anyhow::Error>> {
+    vm::invoke_contract(
+        ContractCaller::System,
+        state,
+        Cow::Owned(contract.clone()),
+        None,
+        params.into_iter(),
+        IndexMap::new(),
+        10000,
+        entry,
+        Cow::Owned(Default::default()),
+        true,
+    ).await
 }
 
 #[tokio::test]
-async fn test_contract_balance_for_gas() {
-    let mut state = MockChainState::new();
-    let contract_hash = Hash::zero();
-    
-    // Get contract balance (should initialize to 0)
-    {
-        let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
-        assert_eq!(*balance, 0);
-        assert_eq!(*versioned_state, VersionedState::New);
-        
-        // Update the balance
-        *balance = 5000;
-        // New state doesn't change when marked as updated
-        versioned_state.mark_updated();
-        assert_eq!(*versioned_state, VersionedState::New); // Still new
-    }
-    
-    // Verify the update persisted in the state
-    {
-        let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
-        assert_eq!(*balance, 5000);
-        // The state is still the same object, so it's still New
-        assert_eq!(*versioned_state, VersionedState::New);
-    }
-    
-    // Simulate fetching from storage
-    {
-        let contract_balances = state.contract_balances.get_mut(&contract_hash).unwrap();
-        let (versioned_state, _) = contract_balances.get_mut(&XELIS_ASSET).unwrap();
-        *versioned_state = VersionedState::FetchedAt(10);
-    }
-    
-    // Now mark it as updated
-    {
-        let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
-        assert_eq!(*versioned_state, VersionedState::FetchedAt(10));
-        *balance = 6000;
-        versioned_state.mark_updated();
-        assert_eq!(*versioned_state, VersionedState::Updated(10));
-    }
+async fn test_execute_simple_contract() {
+    // Compile a simple contract that returns 0 (success)
+    let code = r#"
+        entry main() {
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let contract_hash = create_contract(&mut chain_state, code).expect("create contract");
+
+    // Invoke the contract with entry point 0
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract_hash),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        10000,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await;
+
+    assert!(result.is_ok(), "contract execution failed: {:?}", result);
+    assert!(result.unwrap().is_success(), "contract should return success (exit code 0)");
 }
 
 #[tokio::test]
-async fn test_refund_gas_sources_single_contract() {
-    use crate::contract::{vm::refund_gas_sources, Source};
+async fn test_contract_with_computation() {
+    // Contract that performs some computation
+    let code = r#"
+        entry main() {
+            let a: u64 = 10;
+            let b: u64 = 20;
+            let sum: u64 = a + b;
+            require(sum == 30, "Sum must be 30");
+            return 0
+        }
+    "#;
 
-    let mut state = MockChainState::new();
-    let contract_hash = Hash::zero();
-    
-    // Initialize contract with balance
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
-        *balance = 1000;
-    }
-    
-    // Create gas sources - contract injected 1000 gas
+    let mut chain_state = MockChainState::new();
+    let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
+
+    // Invoke the contract
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract_hash.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        10000,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await;
+
+    assert!(result.is_ok(), "contract execution failed: {:?}", result);
+    assert!(result.unwrap().is_success(), "contract should return success");
+}
+
+#[tokio::test]
+async fn test_contract_with_parameters() {
+    // Contract that takes two parameters and uses them
+    let code = r#"
+        entry add(a: u64, b: u64) {
+            let sum: u64 = a + b;
+            require(sum == 30, "Sum must be 30");
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
+
+    // Invoke the contract with parameters (10 and 20)
+    let params = vec![
+        Primitive::U64(10).into(),
+        Primitive::U64(20).into(),
+    ];
+
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract_hash),
+        None,
+        params.into_iter(),
+        IndexMap::new(),
+        10000,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await;
+
+    assert!(result.is_ok(), "contract execution failed: {:?}", result);
+    assert!(result.unwrap().is_success(), "contract should return success (exit code 0)");
+}
+
+#[tokio::test]
+async fn test_refund_with_gas_sources() {
+    // Contract that performs some computation
+    let code = r#"
+        entry main() {
+            let a: u64 = 10;
+            let b: u64 = 20;
+            let sum: u64 = a + b;
+            require(sum == 30, "Sum must be 30");
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
+
+    let contract1 = Hash::new([2u8; 32]);
+    let contract2 = Hash::new([3u8; 32]);
+
     let mut gas_sources = IndexMap::new();
-    gas_sources.insert(Source::Contract(contract_hash.clone()), 1000);
-    
-    // Used gas: 600, max gas: 1000
-    // Should refund: 1000 - 600 = 400
-    refund_gas_sources(&mut state, gas_sources, 600, 1000).await.unwrap();
-    
-    // Check contract balance was refunded
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
-        assert_eq!(*balance, 1400); // 1000 + 400 refund
-    }
-}
+    gas_sources.insert(Source::Contract(contract1.clone()), 5000u64);
+    gas_sources.insert(Source::Contract(contract2.clone()), 5000u64);
 
-#[tokio::test]
-async fn test_refund_gas_sources_single_account() {
-    use crate::contract::{vm::refund_gas_sources, Source};
-    use crate::crypto::KeyPair;
+    // Invoke the contract
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract_hash.clone()),
+        None,
+        std::iter::empty(),
+        gas_sources,
+        10000,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await;
 
-    let mut state = MockChainState::new();
-    let keypair = KeyPair::new();
-    let account = keypair.get_public_key().compress();
-    
-    // Initialize account with balance (encrypted)
-    {
-        let balance_ct = keypair.get_public_key().encrypt(2000u64);
-        state.accounts.insert(account.clone(), AccountChainState {
-            balances: [(XELIS_ASSET, balance_ct)].into_iter().collect(),
-            nonce: 0,
-        });
-    }
-    
-    // Create gas sources - account paid 500 gas
-    let mut gas_sources = IndexMap::new();
-    gas_sources.insert(Source::Account(account.clone()), 500);
-    
-    // Used gas: 300, max gas: 500
-    // Should refund: 500 - 300 = 200
-    refund_gas_sources(&mut state, gas_sources, 300, 500).await.unwrap();
-    
-    // Check account balance was refunded (should add 200 to the ciphertext)
-    let balance_ct = &state.accounts.get(&account).unwrap().balances[&XELIS_ASSET];
-    let decrypted = keypair.decrypt_to_point(balance_ct);
-    assert_eq!(decrypted, Scalar::from(2200u64) * (*G)); // 2000 + 200 refund
-}
+    let execution = result.expect("contract execution failed");
+    assert!(execution.is_success(), "contract should return success");
 
-#[tokio::test]
-async fn test_refund_gas_sources_multiple_contracts() {
-    use crate::contract::{vm::refund_gas_sources, Source};
+    // Calculate expected fee gas and burned gas
+    let burned_gas = execution.used_gas * TX_GAS_BURN_PERCENT / 100;
+    let gas_fee = execution.used_gas - burned_gas;
 
-    let mut state = MockChainState::new();
-    let contract1 = Hash::zero();
-    let contract2 = Hash::new([1u8; 32]);
-    
-    // Initialize contracts with balances
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
-        *balance = 500;
-    }
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
-        *balance = 800;
-    }
-    
-    // Create gas sources
-    // contract1 injected 200 gas, contract2 injected 200 gas
-    // Total: 400 gas
-    let mut gas_sources = IndexMap::new();
-    gas_sources.insert(Source::Contract(contract1.clone()), 200);
-    gas_sources.insert(Source::Contract(contract2.clone()), 200);
-    
-    // Used gas: 300, max gas: 400
-    // Should refund: 400 - 300 = 100
-    // Each contract should get proportional refund: 50 each (100 * 200/400)
-    refund_gas_sources(&mut state, gas_sources, 300, 400).await.unwrap();
-    
-    // Check balances
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
-        assert_eq!(*balance, 550); // 500 + 50 refund
-    }
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
-        assert_eq!(*balance, 850); // 800 + 50 refund
-    }
-}
+    assert_eq!(execution.burned_gas, burned_gas, "burned gas should match expected value");
+    assert_eq!(execution.fee_gas, gas_fee, "fee gas should match expected value");
+    assert_eq!(execution.used_gas, burned_gas + gas_fee, "used gas should equal burned gas plus fee gas");
 
-#[tokio::test]
-async fn test_refund_gas_sources_proportional_different_amounts() {
-    use crate::contract::{vm::refund_gas_sources, Source};
+    let expected_refund = 10000 - execution.used_gas;
+    let expected_refund_per_source = expected_refund / 2;
 
-    let mut state = MockChainState::new();
-    let contract1 = Hash::zero();
-    let contract2 = Hash::new([1u8; 32]);
-    
-    // Initialize contracts with balances
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
-        *balance = 1000;
-    }
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
-        *balance = 2000;
-    }
-    
-    // Create gas sources
-    // contract1 injected 300 gas, contract2 injected 700 gas
-    // Total: 1000 gas
-    let mut gas_sources = IndexMap::new();
-    gas_sources.insert(Source::Contract(contract1.clone()), 300);
-    gas_sources.insert(Source::Contract(contract2.clone()), 700);
-    
-    // Used gas: 600, max gas: 1000
-    // Should refund: 1000 - 600 = 400
-    // contract1 should get: 400 * 300/1000 = 120
-    // contract2 should get: 400 * 700/1000 = 280
-    refund_gas_sources(&mut state, gas_sources, 600, 1000).await.unwrap();
-    
-    // Check balances
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
-        assert_eq!(*balance, 1120); // 1000 + 120 refund
-    }
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
-        assert_eq!(*balance, 2280); // 2000 + 280 refund
-    }
-}
+    // Check that the actual contract didn't receive any refund
+    let (_, actual_contract_balance) = chain_state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
+    assert_eq!(*actual_contract_balance, 0, "actual contract gas balance should be 0 after execution");
 
-#[tokio::test]
-async fn test_refund_gas_sources_all_gas_used() {
-    use crate::contract::{vm::refund_gas_sources, Source};
+    // Check the contract balances
+    let (_, contract_balance_1) = chain_state.get_contract_balance_for_gas(&contract1).await.unwrap();
+    assert_eq!(*contract_balance_1, expected_refund_per_source, "contract gas balance should be 0 after refund");
 
-    let mut state = MockChainState::new();
-    let contract = Hash::zero();
-    
-    // Initialize contract with balance
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
-        *balance = 1000;
-    }
-    
-    // Create gas sources - contract injected 500 gas
-    let mut gas_sources = IndexMap::new();
-    gas_sources.insert(Source::Contract(contract.clone()), 500);
-    
-    // Used gas: 500, max gas: 500
-    // Should refund: 0 (all gas was used)
-    refund_gas_sources(&mut state, gas_sources, 500, 500).await.unwrap();
-    
-    // Check contract balance - should be unchanged
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
-        assert_eq!(*balance, 1000); // No refund
-    }
-}
+    let (_, contract_balance_2) = chain_state.get_contract_balance_for_gas(&contract2).await.unwrap();
 
-#[tokio::test]
-async fn test_refund_gas_sources_no_overflow() {
-    use crate::contract::{vm::refund_gas_sources, Source};
+    assert_eq!(*contract_balance_2, expected_refund_per_source, "contract gas balance should receive a refund");
 
-    let mut state = MockChainState::new();
-    let contract = Hash::zero();
-    
-    // Initialize contract with balance
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
-        *balance = 5000;
-    }
-    
-    // Create gas sources - contract injected 1000 gas
-    let mut gas_sources = IndexMap::new();
-    gas_sources.insert(Source::Contract(contract.clone()), 1000);
-    
-    // Used gas exceeds max gas - should fail with overflow
-    let result = refund_gas_sources(&mut state, gas_sources, 1200, 1000).await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
-async fn test_refund_gas_sources_mixed_sources() {
-    use crate::contract::{vm::refund_gas_sources, Source};
-    use crate::crypto::KeyPair;
-
-    let mut state = MockChainState::new();
-    let contract = Hash::zero();
-    let keypair = KeyPair::new();
-    let account = keypair.get_public_key().compress();
-    
-    // Initialize contract with balance
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
-        *balance = 3000;
-    }
-    
-    // Initialize account with balance
-    {
-        let balance_ct = keypair.get_public_key().encrypt(5000u64);
-        state.accounts.insert(account.clone(), AccountChainState {
-            balances: [(XELIS_ASSET, balance_ct)].into_iter().collect(),
-            nonce: 0,
-        });
-    }
-    
-    // Create gas sources
-    // contract injected 600 gas, account paid 400 gas
-    // Total: 1000 gas
-    let mut gas_sources = IndexMap::new();
-    gas_sources.insert(Source::Contract(contract.clone()), 600);
-    gas_sources.insert(Source::Account(account.clone()), 400);
-    
-    // Used gas: 700, max gas: 1000
-    // Should refund: 1000 - 700 = 300
-    // contract should get: 300 * 600/1000 = 180
-    // account should get: 300 * 400/1000 = 120
-    refund_gas_sources(&mut state, gas_sources, 700, 1000).await.unwrap();
-    
-    // Check contract balance
-    {
-        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
-        assert_eq!(*balance, 3180); // 3000 + 180 refund
-    }
-    
-    // Check account balance
-    let balance_ct = &state.accounts.get(&account).unwrap().balances[&XELIS_ASSET];
-    let balance_point = keypair.decrypt_to_point(balance_ct);
-
-    assert_eq!(balance_point, Scalar::from(5120u64) * (*G)); // 5000 + 120 refund
-}
-
-#[tokio::test]
-async fn test_refund_gas_sources_empty_sources() {
-    use crate::contract::vm::refund_gas_sources;
-
-    let mut state = MockChainState::new();
-    
-    // Empty gas sources - should not error
-    let gas_sources = IndexMap::new();
-    
-    refund_gas_sources(&mut state, gas_sources, 500, 1000).await.unwrap();
-    
-    // Nothing should have changed
-    assert!(state.contract_balances.is_empty());
+    assert_eq!(chain_state.contract_caches.len(), 3);
 }
