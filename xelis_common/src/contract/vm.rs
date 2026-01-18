@@ -299,7 +299,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
     let is_success = exit_value.is_success();
     // If the contract execution was successful, we need to merge the cache
-    let mut outputs = chain_state.logs;
+    let mut logs = chain_state.logs;
 
     let gas_injections = chain_state.injected_gas;
     let modules = chain_state.modules;
@@ -329,26 +329,19 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
     // In case of success, used_gas <= vm_max_gas
     if is_success {
-        let mut caches = chain_state.caches;
+        let mut changes = chain_state.changes;
 
-        let tracker = chain_state.tracker;
-        let assets = chain_state.assets;
         let executions = chain_state.executions.changes;
-
-        let gas_fee = chain_state.gas_fee;
 
         // Some contract have injected gas to users
         if vm_max_gas > max_gas && !gas_injections.is_empty() {
             // Refund only based on the extra max gas
-            refund_extra_gas_injections(state, gas_injections, max_gas, vm_max_gas, &mut outputs, &mut caches).await?;
+            refund_extra_gas_injections(state, gas_injections, max_gas, vm_max_gas, &mut logs, &mut changes.caches).await?;
         }
 
         state.merge_contract_changes(
-            caches,
-            tracker,
-            assets,
+            changes,
             executions,
-            gas_fee,
         ).await
             .map_err(ContractError::State)?;
 
@@ -367,7 +360,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         }
     } else {
         // Otherwise, something was wrong, we delete the outputs made by the contract
-        outputs.clear();
+        logs.clear();
 
         if !gas_sources.is_empty() {
             refund_gas_sources(state, gas_sources, used_gas, max_gas).await?;
@@ -386,7 +379,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
                 .ok_or(ContractError::GasOverflow)?;
 
             // We consume only what was used above the original max gas
-            charge_gas_injections(state, gas_injections, extra_used_gas, &mut outputs).await?;
+            charge_gas_injections(state, gas_injections, extra_used_gas, &mut logs).await?;
             refund_gas = 0;
         }
 
@@ -403,7 +396,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
             }
 
             // It was not successful, we need to refund the deposits
-            outputs.push(ContractLog::RefundDeposits);
+            logs.push(ContractLog::RefundDeposits);
         }
     }
 
@@ -415,19 +408,19 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     debug!("used gas: {}, refund gas: {}, burned gas: {}, gas fee: {}", used_gas, refund_gas, burned_gas, fee_gas);
 
     if refund_gas > 0 {
-        outputs.push(ContractLog::RefundGas { amount: refund_gas });
+        logs.push(ContractLog::RefundGas { amount: refund_gas });
     }
 
     // Push the exit value to the outputs
     match exit_value.clone() {
         ExitValue::ExitCode(code) => {
             debug!("Contract exited with code {}", code);
-            outputs.push(ContractLog::ExitCode(Some(code)));
+            logs.push(ContractLog::ExitCode(Some(code)));
         },
         ExitValue::Payload(payload) => {
             debug!("Contract exited with payload");
 
-            outputs.extend([
+            logs.extend([
                 ContractLog::ExitPayload(payload),
                 ContractLog::ExitCode(Some(0))
             ]);
@@ -435,7 +428,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         ExitValue::Error(err) => {
             debug!("Contract exited with error: {}", err);
 
-            outputs.extend([
+            logs.extend([
                 ContractLog::ExitError(err),
                 ContractLog::ExitCode(None)
             ]);
@@ -443,7 +436,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     };
 
     // Track the outputs
-    state.set_contract_logs(caller, outputs).await
+    state.set_contract_logs(caller, logs).await
         .map_err(ContractError::State)?;
 
     Ok(ExecutionResult {

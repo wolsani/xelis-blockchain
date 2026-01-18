@@ -269,7 +269,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
         // add the part for the miners
         let fee_part = total_cost - burned_part;
-        state.gas_fee += fee_part;
+        state.changes.extra_gas_fee = fee_part.checked_add(state.changes.extra_gas_fee)
+            .ok_or(EnvironmentError::GasOverflow)?;
 
         record_balance_charge(
             provider,

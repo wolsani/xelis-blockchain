@@ -10,12 +10,13 @@ use crate::{
     block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
     config::XELIS_ASSET,
     contract::{
-        AssetChanges,
         ChainState as ContractChainState,
+        AssetChanges,
+        ContractEventTracker,
+        ChainStateChanges,
         ExecutionsManager,
         ExecutionsChanges,
         ContractCache,
-        ContractEventTracker,
         ContractLog,
         ContractMetadata,
         ContractModule,
@@ -51,6 +52,8 @@ pub struct MockAccount {
 
 #[derive(Debug, Clone)]
 pub struct MockChainState {
+    pub assets: HashMap<Hash, Option<AssetChanges>>,
+    pub tracker: ContractEventTracker,
     pub accounts: HashMap<PublicKey, MockAccount>,
     pub multisig: HashMap<PublicKey, MultiSigPayload>,
     pub contracts: HashMap<Hash, ContractModule>,
@@ -80,6 +83,8 @@ impl MockChainState {
         );
 
         Self {
+            assets: HashMap::new(),
+            tracker: Default::default(),
             accounts: HashMap::new(),
             multisig: HashMap::new(),
             contracts: HashMap::new(),
@@ -98,7 +103,6 @@ impl MockChainState {
     }
 
     pub async fn on_post_execution(&mut self) -> Result<(), anyhow::Error> {
-
         Ok(())
     }
 
@@ -340,28 +344,27 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
             mainnet: self.mainnet,
             // We only provide the current contract cache available
             // others can be lazily added to it
-            caches: [(contract.as_ref().clone(), cache)].into_iter().collect(),
             entry_contract: contract,
             topoheight: 1,
             block_hash: &self.block_hash,
             block: &self.block,
             caller,
             logs: Vec::new(),
-            tracker: ContractEventTracker::default(),
             // Global caches (all contracts)
             global_caches: &mut self.contract_caches,
-            assets: HashMap::new(),
             modules: HashMap::new(),
-            injected_gas: indexmap::IndexMap::new(),
+            injected_gas: IndexMap::new(),
             executions: ExecutionsManager {
                 allow_executions: true,
                 global_executions: &self.executions.executions,
                 changes: Default::default(),
             },
-            events: Default::default(),
-            events_listeners: Default::default(),
+            changes: ChainStateChanges {
+                tracker: self.tracker.clone(),
+                assets: self.assets.clone(),
+                ..Default::default()
+            },
             permission,
-            gas_fee: 0,
             gas_fee_allowance: 0,
             environments: Cow::Owned(HashMap::new()),
         };
@@ -379,15 +382,36 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
 
     async fn merge_contract_changes(
         &mut self,
-        _caches: HashMap<Hash, ContractCache>,
-        _tracker: ContractEventTracker,
-        _assets: HashMap<Hash, Option<AssetChanges>>,
-        _executions: ExecutionsChanges,
-        extra_gas_fee: u64,
-    ) -> Result<(),  anyhow::Error> {
-        // TODO: persist changes in the chain state
+        changes: ChainStateChanges,
+        executions_changes: ExecutionsChanges,
+    ) -> Result<(), anyhow::Error> {
+        // Merge contract caches
+        for (contract, mut cache) in changes.caches {
+            cache.clean_up();
 
-        self.add_gas_fee(extra_gas_fee).await
+            match self.contract_caches.entry(contract) {
+                Entry::Occupied(mut o) => {
+                    let current = o.get_mut();
+                    *current = cache;
+                },
+                Entry::Vacant(e) => {
+                    e.insert(cache);
+                }
+            };
+        }
+
+        self.assets = changes.assets;
+        self.tracker = changes.tracker;
+
+        // Merge executions
+        for (hash, execution) in executions_changes.executions {
+            self.executions.executions.insert(hash, execution);
+        }
+
+        self.executions.at_topoheight.extend(executions_changes.at_topoheight);
+        self.executions.block_end.extend(executions_changes.block_end);
+
+        self.add_gas_fee(changes.extra_gas_fee).await
     }
 
     async fn get_contract_balance_for_gas<'b>(

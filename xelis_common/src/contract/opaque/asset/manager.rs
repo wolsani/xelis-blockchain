@@ -162,7 +162,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     // If we have a fixed max supply, we need to mint it to the contract
     if let MaxSupplyMode::Fixed(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
+        get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone())
             .balances
             .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }

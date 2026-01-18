@@ -9,10 +9,8 @@ use crate::{
     contract::{
         vm::ContractCaller,
         ExecutionsChanges,
-        AssetChanges,
+        ChainStateChanges,
         ChainState,
-        ContractCache,
-        ContractEventTracker,
         ContractLog,
         ContractProvider,
         InterContractPermission,
@@ -177,11 +175,8 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
     /// Merge the contract cache with the stored one
     async fn merge_contract_changes(
         &mut self,
-        caches: HashMap<Hash, ContractCache>,
-        tracker: ContractEventTracker,
-        assets: HashMap<Hash, Option<AssetChanges>>,
+        changes: ChainStateChanges,
         executions_changes: ExecutionsChanges,
-        extra_gas_fee: u64,
     ) -> Result<(), E>;
 
     /// Retrieve the contract balance used to pay gas
