@@ -57,6 +57,8 @@ pub enum ContractCaller<'a> {
     Scheduled(Cow<'a, Hash>, Cow<'a, Hash>),
     // contract from which the event is, actual contract being invoked
     EventCallback(Cow<'a, Hash>, Cow<'a, Hash>),
+    // Invoked by the system (no specific caller)
+    System,
 }
 
 impl<'a> ContractCaller<'a> {
@@ -65,6 +67,7 @@ impl<'a> ContractCaller<'a> {
             Self::Transaction(hash, _) => Cow::Borrowed(hash),
             Self::Scheduled(hash, _) => hash.clone(),
             Self::EventCallback(hash, _) => hash.clone(),
+            Self::System => Cow::Owned(Hash::zero()),
         }
     }
 }
