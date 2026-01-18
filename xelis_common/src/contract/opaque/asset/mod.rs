@@ -30,36 +30,36 @@ use crate::{
 
 pub use manager::*;
 
-// Represent an Asset Manager type in the opaque context
+// Represent an Asset type in the opaque context
 // It only holds the asset hash because the AssetData
 // may be updated at any time in the chain state
 #[derive(Clone, Debug)]
-pub struct Asset {
+pub struct OpaqueAsset {
     pub hash: Hash
 }
 
-impl std::hash::Hash for Asset {
+impl std::hash::Hash for OpaqueAsset {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.hash.hash(state);
     }
 }
 
-impl PartialEq for Asset {
+impl PartialEq for OpaqueAsset {
     fn eq(&self, other: &Self) -> bool {
         self.hash.eq(&other.hash)
     }
 }
 
-impl Eq for Asset {}
+impl Eq for OpaqueAsset {}
 
-impl Serializable for Asset {}
+impl Serializable for OpaqueAsset {}
 
-impl JSONHelper for Asset {}
+impl JSONHelper for OpaqueAsset {}
 
 // Maximum supply set for this asset
 pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
@@ -75,7 +75,7 @@ pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, 
 // Contract hash that created this asset
 pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
@@ -90,7 +90,7 @@ pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParam
 // Contract hash that created this asset
 pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
@@ -105,7 +105,7 @@ pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams,
 // Circulating supply for this asset
 pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let (_, state) = from_context::<P>(context)?;
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     Ok(SysCallResult::Return(Primitive::U64(changes.circulating_supply.1).into()))
@@ -114,7 +114,7 @@ pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance
 // Get the self claimed asset name
 pub fn asset_get_name(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
@@ -124,7 +124,7 @@ pub fn asset_get_name(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, con
 // Get the decimals for this asset
 pub fn asset_get_decimals(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
@@ -134,14 +134,14 @@ pub fn asset_get_decimals(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>,
 // Get the hash representation of the asset
 pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Opaque(asset.hash.clone().into()).into()))
 }
 
 // Get the contract hash owner of this asset
 pub fn asset_get_owner(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
 
@@ -156,7 +156,7 @@ pub fn asset_get_owner(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, co
 // Get the contract creator
 pub fn asset_get_creator(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
 
@@ -171,7 +171,7 @@ pub fn asset_get_creator(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, 
 // Get the contract id owner of this asset
 pub fn asset_get_creator_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
 
@@ -186,7 +186,7 @@ pub fn asset_get_creator_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_
 // Get the hash representation of the asset
 pub fn asset_get_ticker(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
@@ -196,7 +196,7 @@ pub fn asset_get_ticker(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, c
 // are we the owner of this or not
 pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
 
@@ -210,7 +210,7 @@ pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, metadata: &ModuleMetada
 
 pub fn asset_is_mintable(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
@@ -223,7 +223,7 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: Fn
         .into_opaque_type()?;
 
     let zelf = zelf?;
-    let asset: &Asset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let (provider, state) = from_context::<P>(context)?;
 
     // Ensure that the contract hash is a valid one
@@ -243,7 +243,7 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: Fn
 
 pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
-    let asset: &mut Asset = zelf.as_opaque_type_mut()?;
+    let asset: &mut OpaqueAsset = zelf.as_opaque_type_mut()?;
     let (provider, state) = from_context::<P>(context)?;
 
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;

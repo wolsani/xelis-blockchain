@@ -383,7 +383,7 @@ async fn test_tx_invoke_contract() {
     let mut state = MockChainState::new();
     let mut module = Module::new();
     module.add_entry_chunk(Chunk::new());
-    state.contracts.insert(Hash::zero(), ContractModule { version: Default::default(), module: Arc::new(module) });
+    state.contracts.insert(Hash::zero(), Some(ContractModule { version: Default::default(), module: Arc::new(module) }));
 
     // Create the chain state
     {

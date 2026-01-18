@@ -43,19 +43,19 @@ pub fn create_contract(state: &mut MockChainState, code: &str) -> anyhow::Result
     let module = compile_contract(&state.env, code)?;
 
     let hash = Hash::new(rand::random());
-    state.contracts.insert(hash.clone(), ContractModule {
+    state.contracts.insert(hash.clone(), Some(ContractModule {
         version: Default::default(),
         module: Arc::new(module.clone()),
-    });
+    }));
 
     Ok(hash)
 }
 
 /// Deploys a contract by creating it and invoking its constructor (hook 0)
-pub async fn deploy_contract(state: &mut MockChainState, code: &str) -> anyhow::Result<Hash> {
+pub async fn deploy_contract(state: &mut MockChainState, code: &str) -> anyhow::Result<(Hash, vm::ExecutionResult)> {
     let contract_hash = create_contract(state, code)?;
 
-    vm::invoke_contract(
+    let execution = vm::invoke_contract(
         ContractCaller::System,
         state,
         Cow::Owned(contract_hash.clone()),
@@ -68,7 +68,7 @@ pub async fn deploy_contract(state: &mut MockChainState, code: &str) -> anyhow::
         true,
     ).await.expect("deploy contract");
 
-    Ok(contract_hash)
+    Ok((contract_hash, execution))
 }
 
 /// Invokes a contract with the given entry point and parameters

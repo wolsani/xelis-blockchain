@@ -27,7 +27,7 @@ use crate::{
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
-use super::Asset;
+use super::OpaqueAsset;
 
 // Maximum size for the ticker
 pub const TICKER_LEN: usize = 8;
@@ -169,7 +169,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
 
     state.logs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
 
-    let asset = Asset {
+    let asset = OpaqueAsset {
         hash: asset_hash
     };
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
@@ -188,7 +188,7 @@ pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    let asset = Asset {
+    let asset = OpaqueAsset {
         hash: asset_hash
     };
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
@@ -205,7 +205,7 @@ pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    let asset = Asset {
+    let asset = OpaqueAsset {
         hash
     };
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))

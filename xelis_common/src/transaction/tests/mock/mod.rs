@@ -61,7 +61,7 @@ pub struct MockChainState {
     pub events_listeners: HashMap<(Hash, u64), Vec<(Hash, EventCallbackRegistration)>>,
     pub accounts: HashMap<PublicKey, MockAccount>,
     pub multisig: HashMap<PublicKey, MultiSigPayload>,
-    pub contracts: HashMap<Hash, ContractModule>,
+    pub contracts: HashMap<Hash, Option<ContractModule>>,
     pub contract_logs: HashMap<Hash, Vec<ContractLog>>,
     pub burned_coins: HashMap<Hash, u64>,
     pub gas_fee: u64,
@@ -288,7 +288,7 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
         hash: &'a Hash,
         module: &'a ContractModule,
     ) -> Result<(),  anyhow::Error> {
-        self.contracts.insert(hash.clone(), module.clone());
+        self.contracts.insert(hash.clone(), Some(module.clone()));
         Ok(())
     }
 
@@ -304,7 +304,9 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
         contract: &'a Hash
     ) -> Result<(&Module, &Environment<ContractMetadata>),  anyhow::Error> {
         let module = self.contracts.get(contract)
-            .context("Contract module not found")?;
+            .context("Contract module not found")?
+            .as_ref()
+            .context("Contract module not loaded")?;
         Ok((&module.module, self.env.environment()))
     }
 }
@@ -337,7 +339,9 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
     ) -> Result<(ContractEnvironment<'b, MockStorageProvider>, crate::contract::ChainState<'b>),  anyhow::Error> {
         // Get the contract module
         let contract_module = self.contracts.get(&contract)
-            .context("Contract module not found")?;
+            .context("Contract module not found")?
+            .as_ref()
+            .context("Contract module not loaded")?;
         
         // Find the contract cache in our cache map
         let mut cache = self.contract_caches.get(&contract)
@@ -393,7 +397,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
             logs: Vec::new(),
             // Global caches (all contracts)
             global_caches: &mut self.contract_caches,
-            modules: HashMap::new(),
+            modules: self.contracts.clone(),
             injected_gas: IndexMap::new(),
             executions: ExecutionsManager {
                 allow_executions: true,

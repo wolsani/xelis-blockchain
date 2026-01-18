@@ -202,7 +202,7 @@ impl From<EnvironmentError> for ExitError {
             EnvironmentError::Static(msg) => runtime_error(msg),
             EnvironmentError::OutOfBounds(_, _) => ExitError::OutOfBounds,
             EnvironmentError::Expect(msg) => runtime_error(msg),
-            _ => ExitError::IllegalState,
+            e => runtime_error(e.to_string()),
         }
     }
 }

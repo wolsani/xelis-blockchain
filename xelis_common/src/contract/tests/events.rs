@@ -25,29 +25,35 @@ async fn contract_event_flow() {
         }
 
         hook constructor() -> u64 {
-            let contract = Hash::from_hex("CONTRACT_HASH");
-            listen_event(contract, 42, on_contract_event, 500);
+            let contract_hash = Hash::from_hex("CONTRACT_HASH");
+            let contract = Contract::new(contract_hash).expect("load contract");
+            contract.listen_event(42, on_contract_event, 500);
             
             return 0
         }
     "#.replace("CONTRACT_HASH", &emitter_hash.to_string());
 
     // Deploy the listener hash
-    deploy_contract(&mut chain_state, &code).await
+    let (_, execution) = deploy_contract(&mut chain_state, &code).await
         .expect("deploy listener contract");
 
+    assert!(execution.is_success(), "listener contract deployment failed {:?}", execution);
+
     // Invoke the emitter contract to trigger the event
-    invoke_contract(
+    let execution = invoke_contract(
         &mut chain_state,
         &emitter_hash,
         InvokeContract::Entry(0),
         vec![],
     ).await.expect("invoke emitter contract");
 
+    assert!(execution.is_success(), "emitter contract execution failed {:?}", execution);
+
     let mut executions = 0;
     for (caller, logs) in chain_state.contract_logs {
         println!("Logs for contract caller {}:", caller);
         for log in logs {
+            println!("- {:?}", log);
             match log {
                 ContractLog::ExitCode(Some(0)) => {
                     executions += 1;

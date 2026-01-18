@@ -105,7 +105,7 @@ impl_opaque!(
 );
 impl_opaque!(
     "Asset",
-    Asset
+    OpaqueAsset
 );
 impl_opaque!(
     "Contract",

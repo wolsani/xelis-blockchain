@@ -277,7 +277,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage", false));
     let read_only_storage_type = Type::Opaque(env.register_opaque::<OpaqueReadOnlyStorage>("ReadOnlyStorage", false));
     let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage", false));
-    let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset", false));
+    let asset_type = Type::Opaque(env.register_opaque::<OpaqueAsset>("Asset", false));
 
     // All others opaque types accepted as input
     let hash_type = Type::Opaque(env.register_opaque::<Hash>("Hash", true));
@@ -2188,10 +2188,8 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
 
         env.register_native_function(
             "listen_event",
-            None,
+            Some(contract_type.clone()),
             vec![
-                // contract hash
-                ("contract", hash_type.clone()),
                 // event_id
                 ("id", Type::U64),
                 // chunk id to call when event is captured
@@ -2494,23 +2492,27 @@ fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
     Ok(SysCallResult::None)
 }
 
-async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    let max_gas = params.remove(3)
+// Listen to an event from a contract
+// Once triggered, it will call the given chunk_id with the event parameters
+// with allocated gas and will be removed from the listeners after being called
+async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+    let contract = zelf?
+        .as_opaque_type::<OpaqueContract>()?
+        .hash
+        .clone();
+
+    let max_gas = params.remove(2)
         .as_u64()?;
 
     if max_gas > MAX_GAS_USAGE_PER_TX {
         return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
     }
 
-    let chunk_id = params.remove(2)
+    let chunk_id = params.remove(1)
         .as_u16()?;
 
-    let event_id = params.remove(1)
+    let event_id = params.remove(0)
         .as_u64()?;
-
-    let contract: Hash = params.remove(0)
-        .into_owned()
-        .into_opaque_type()?;
 
     let (provider, state) = from_context::<P>(context)?;
     let listeners = state.changes.events_listeners.entry((contract.clone(), event_id))
