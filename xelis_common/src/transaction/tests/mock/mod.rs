@@ -16,6 +16,8 @@ use crate::{
         ChainStateChanges,
         ExecutionsManager,
         ExecutionsChanges,
+        EventCallbackRegistration,
+        CallbackEvent,
         ContractCache,
         ContractLog,
         ContractMetadata,
@@ -54,6 +56,8 @@ pub struct MockAccount {
 pub struct MockChainState {
     pub assets: HashMap<Hash, Option<AssetChanges>>,
     pub tracker: ContractEventTracker,
+    pub events: Vec<CallbackEvent>,
+    pub events_listeners: HashMap<(Hash, u64), Vec<(Hash, EventCallbackRegistration)>>,
     pub accounts: HashMap<PublicKey, MockAccount>,
     pub multisig: HashMap<PublicKey, MultiSigPayload>,
     pub contracts: HashMap<Hash, ContractModule>,
@@ -85,6 +89,8 @@ impl MockChainState {
         Self {
             assets: HashMap::new(),
             tracker: Default::default(),
+            events: Vec::new(),
+            events_listeners: HashMap::new(),
             accounts: HashMap::new(),
             multisig: HashMap::new(),
             contracts: HashMap::new(),
@@ -382,8 +388,8 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
 
     async fn merge_contract_changes(
         &mut self,
-        changes: ChainStateChanges,
-        executions_changes: ExecutionsChanges,
+        mut changes: ChainStateChanges,
+        mut executions_changes: ExecutionsChanges,
     ) -> Result<(), anyhow::Error> {
         // Merge contract caches
         for (contract, mut cache) in changes.caches {
@@ -402,14 +408,26 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
 
         self.assets = changes.assets;
         self.tracker = changes.tracker;
+        self.events.append(&mut changes.events);
+
+        for (key, mut listeners) in changes.events_listeners {
+            match self.events_listeners.entry(key) {
+                Entry::Occupied(mut o) => {
+                    o.get_mut().append(&mut listeners);
+                },
+                Entry::Vacant(e) => {
+                    e.insert(listeners);
+                }
+            };
+        }
 
         // Merge executions
         for (hash, execution) in executions_changes.executions {
             self.executions.executions.insert(hash, execution);
         }
 
-        self.executions.at_topoheight.extend(executions_changes.at_topoheight);
-        self.executions.block_end.extend(executions_changes.block_end);
+        self.executions.at_topoheight.append(&mut executions_changes.at_topoheight);
+        self.executions.block_end.append(&mut executions_changes.block_end);
 
         self.add_gas_fee(changes.extra_gas_fee).await
     }

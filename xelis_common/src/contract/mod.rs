@@ -9,6 +9,7 @@ mod permission;
 mod module;
 mod source;
 mod error;
+mod event_callback;
 
 #[cfg(test)]
 pub mod tests;
@@ -24,7 +25,7 @@ use std::{
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use curve25519_dalek::Scalar;
-use indexmap::{IndexMap, IndexSet, map::Entry as IndexEntry};
+use indexmap::{IndexMap, IndexSet};
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -82,6 +83,7 @@ pub use permission::*;
 pub use module::*;
 pub use source::*;
 pub use error::*;
+pub use event_callback::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -179,7 +181,7 @@ pub struct ChainStateChanges {
     pub events: Vec<CallbackEvent>,
     // Listeners for events registered
     // (contract, event_id) -> (listener_contract -> (chunk_id, max_gas))
-    pub events_listeners: HashMap<(Hash, u64), IndexMap<Hash, (u16, u64)>>,
+    pub events_listeners: HashMap<(Hash, u64), Vec<(Hash, EventCallbackRegistration)>>,
     // Extra Gas fee accumulated during the execution
     pub extra_gas_fee: u64,
 }
@@ -2514,31 +2516,25 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
     let listeners = state.changes.events_listeners.entry((contract.clone(), event_id))
         .or_insert_with(Default::default);
 
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
 
-    // Verify if we're already listening to this event
-    match listeners.entry(metadata.metadata.contract_executor.clone()) {
-        IndexEntry::Occupied(_) => return Ok(Primitive::Boolean(false).into()),
-        IndexEntry::Vacant(entry) => {
-            let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    // Event is already registered in our cache
+    if !cache.events_listeners.insert((contract.clone(), event_id)) {
+        return Ok(Primitive::Boolean(false).into());
+    }
 
-            // Event is already registered in our cache
-            if !cache.events_listeners.insert((contract.clone(), event_id)) {
-                return Ok(Primitive::Boolean(false).into());
-            }
+    // check from storage that we're not already registered
+    if provider.has_contract_callback_for_event(
+        &contract,
+        event_id,
+        &metadata.metadata.contract_executor,
+        state.topoheight,
+    ).await? {
+        return Ok(Primitive::Boolean(false).into());
+    }
 
-            // check from storage that we're not already registered
-            if provider.has_contract_callback_for_event(
-                &contract,
-                event_id,
-                &metadata.metadata.contract_executor,
-                state.topoheight,
-            ).await? {
-                return Ok(Primitive::Boolean(false).into());
-            }
-
-            entry.insert((chunk_id, max_gas));
-        }
-    };
+    let callback = EventCallbackRegistration { chunk_id, max_gas };
+    listeners.push((metadata.metadata.contract_executor.clone(), callback));
 
     record_gas_allowance(context, max_gas)?;
 
