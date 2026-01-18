@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
     ops::{Deref, DerefMut},
 };
 use anyhow::Context;
@@ -16,6 +16,7 @@ use xelis_common::{
         AssetChanges,
         CallbackEvent,
         ChainState as ContractChainState,
+        EventCallbackRegistration,
         ChainStateChanges,
         ContractCache,
         ContractEventTracker,
@@ -54,7 +55,6 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         types::TopoHeightMetadata,
-        EventCallback,
         Storage,
         VersionedContractModule,
         VersionedContractBalance,
@@ -78,9 +78,9 @@ struct ContractManager<'b> {
     // Planned executions for the current block
     executions: ExecutionsChanges,
     // All events callback to process
-    events: Vec<CallbackEvent>,
+    events: VecDeque<CallbackEvent>,
     // all events registrations that must be stored
-    events_registrations: HashMap<(Hash, u64), Vec<(Hash, EventCallback)>>,
+    events_listeners: HashMap<(Hash, u64), Vec<(Hash, EventCallbackRegistration)>>,
     // all events already processed from storage
     events_processed: HashMap<(Hash, u64), HashSet<Hash>>,
 }
@@ -345,7 +345,7 @@ impl<'a> FinalizedChainState<'a> {
 
         // Apply all event callback registrations
         debug!("storing event callbacks registrations");
-        for ((contract, event_id), listeners) in self.contract_manager.events_registrations {
+        for ((contract, event_id), listeners) in self.contract_manager.events_listeners {
             // Remove all previously processed for this event
             // So in case it was registered, consumed, and re registered in the same block, we only keep the last one
             let mut processed_listeners = self.contract_manager.events_processed.get_mut(&(contract.clone(), event_id));
@@ -766,7 +766,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
     async fn merge_contract_changes(
         &mut self,
         changes: ChainStateChanges,
-        executions_changes: ExecutionsChanges,
+        mut executions_changes: ExecutionsChanges,
     ) -> Result<(), BlockchainError> {
         for (contract, mut cache) in changes.caches {
             cache.clean_up();
@@ -789,8 +789,21 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             self.contract_manager.executions.executions.insert(hash, execution);
         }
 
-        self.contract_manager.executions.at_topoheight.extend(executions_changes.at_topoheight);
-        self.contract_manager.executions.block_end.extend(executions_changes.block_end);
+        self.contract_manager.executions.at_topoheight.append(&mut executions_changes.at_topoheight);
+        self.contract_manager.executions.block_end.append(&mut executions_changes.block_end);
+
+        self.contract_manager.events.extend(changes.events);
+
+        for (key, mut listeners) in changes.events_listeners {
+            match self.contract_manager.events_listeners.entry(key) {
+                Entry::Occupied(mut o) => {
+                    o.get_mut().append(&mut listeners);
+                },
+                Entry::Vacant(e) => {
+                    e.insert(listeners);
+                }
+            };
+        }
 
         self.add_gas_fee(changes.extra_gas_fee).await?;
 
@@ -964,53 +977,50 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     async fn execute_callback_events(&mut self, caller: &Hash) -> Result<(), BlockchainError> {
         debug!("executing callback events after processing execution {}", caller);
 
-        while !self.contract_manager.events.is_empty() {
-            let events_to_process = std::mem::take(&mut self.contract_manager.events);
-            for event in events_to_process {
-                debug!("executing event callback {} for contract {}", event.event_id, event.contract);
+        while let Some(event) = self.contract_manager.events.pop_front() {
+            debug!("executing event callback {} for contract {}", event.event_id, event.contract);
 
-                // If we've already processed those from storage, we must handle those pending in memory
-                let contract_key = (event.contract.clone(), event.event_id);
-                let callbacks = match self.contract_manager.events_processed.entry(contract_key.clone()) {
-                    Entry::Occupied(_) => {
-                        debug!("event {} for contract {} already processed from storage, getting pending callbacks from memory", event.event_id, event.contract);
-                        // we don't need to include them into our processed list, because we just delete them from registrations
-                        self.contract_manager.events_registrations.remove(&contract_key)
-                            .unwrap_or_default()
-                    },
-                    Entry::Vacant(entry) => {
-                        debug!("event {} for contract {} already processed, skipping", event.event_id, event.contract);
-                        let topoheight = self.inner.topoheight;
-                        let mut callbacks = self.inner.storage.get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?
-                            .collect::<Result<Vec<_>, _>>()?;
+            // If we've already processed those from storage, we must handle those pending in memory
+            let contract_key = (event.contract.clone(), event.event_id);
+            let callbacks = match self.contract_manager.events_processed.entry(contract_key.clone()) {
+                Entry::Occupied(_) => {
+                    debug!("event {} for contract {} already processed from storage, getting pending callbacks from memory", event.event_id, event.contract);
+                    // we don't need to include them into our processed list, because we just delete them from registrations
+                    self.contract_manager.events_listeners.remove(&contract_key)
+                        .unwrap_or_default()
+                },
+                Entry::Vacant(entry) => {
+                    debug!("event {} for contract {} already processed, skipping", event.event_id, event.contract);
+                    let topoheight = self.inner.topoheight;
+                    let mut callbacks = self.inner.storage.get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?
+                        .collect::<Result<Vec<_>, _>>()?;
 
-                        // Sort by contract hash to have a deterministic order
-                        callbacks.sort_by(|a, b| a.0.cmp(&b.0));
+                    // Sort by contract hash to have a deterministic order
+                    callbacks.sort_by(|a, b| a.0.cmp(&b.0));
 
-                        entry.insert(
-                            callbacks.iter()
-                                .map(|(contract, _)| contract.clone())
-                                .collect()
-                        );
+                    entry.insert(
+                        callbacks.iter()
+                            .map(|(contract, _)| contract.clone())
+                            .collect()
+                    );
 
-                        callbacks
-                    }
-                };
-
-                for (contract, callback) in callbacks {
-                    debug!("processing event callback of {}", contract);
-                    self.process_execution(
-                        Cow::Owned(event.contract.clone()),
-                        ContractCaller::EventCallback(Cow::Owned(contract.clone()), Cow::Owned(event.contract.clone())),
-                        // Gas source is the contract being called
-                        [(Source::Contract(contract.clone()), callback.max_gas)].into_iter().collect(),
-                        callback.max_gas,
-                        callback.chunk_id,
-                        event.params.iter().map(|v| v.deep_clone()),
-                        // disable the post hook execution to prevent stack overflow
-                        false,
-                    ).await?;
+                    callbacks
                 }
+            };
+
+            for (contract, callback) in callbacks {
+                debug!("processing event callback of {}", contract);
+                self.process_execution(
+                    Cow::Owned(event.contract.clone()),
+                    ContractCaller::EventCallback(Cow::Owned(caller.clone()), Cow::Owned(event.contract.clone())),
+                    // Gas source is the contract being called
+                    [(Source::Contract(contract.clone()), callback.max_gas)].into_iter().collect(),
+                    callback.max_gas,
+                    callback.chunk_id,
+                    event.params.iter().map(|v| v.deep_clone()),
+                    // disable the post hook execution to prevent stack overflow
+                    false,
+                ).await?;
             }
         }
 

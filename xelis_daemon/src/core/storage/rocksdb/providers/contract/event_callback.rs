@@ -1,14 +1,13 @@
 use async_trait::async_trait;
 use log::trace;
-use xelis_common::{block::TopoHeight, crypto::Hash};
+use xelis_common::{block::TopoHeight, contract::EventCallbackRegistration, crypto::Hash};
 use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{Column, ContractId, IteratorMode},
         snapshot::Direction,
         ContractEventCallbackProvider,
-        VersionedEventCallback,
-        EventCallback,
+        VersionedEventCallbackRegistration,
         RocksStorage
     }
 };
@@ -20,7 +19,7 @@ impl ContractEventCallbackProvider for RocksStorage {
         contract: &Hash,
         event_id: u64,
         listener_contract: &Hash,
-        version: VersionedEventCallback,
+        version: VersionedEventCallbackRegistration,
         topoheight: TopoHeight
     ) -> Result<(), BlockchainError> {
         trace!("set last contract event callback for contract {} event {} listener {} at topoheight {}", contract, event_id, listener_contract, topoheight);
@@ -43,7 +42,7 @@ impl ContractEventCallbackProvider for RocksStorage {
         event_id: u64,
         listener_contract: &Hash,
         max_topoheight: TopoHeight,
-    ) -> Result<Option<(TopoHeight, VersionedEventCallback)>, BlockchainError> {
+    ) -> Result<Option<(TopoHeight, VersionedEventCallbackRegistration)>, BlockchainError> {
         trace!("get event callback for contract {} event {} listener {} at maximum topoheight {}", contract, event_id, listener_contract, max_topoheight);
 
         let Some(contract_id) = self.get_optional_contract_id(contract)? else {
@@ -62,7 +61,7 @@ impl ContractEventCallbackProvider for RocksStorage {
 
             let mut topo = Some(max_topoheight);
             while let Some(current_topoheight) = topo {
-                let version: VersionedEventCallback = self.load_from_disk(Column::VersionedEventCallbacks, &versioned_key)?;
+                let version: VersionedEventCallbackRegistration = self.load_from_disk(Column::VersionedEventCallbacks, &versioned_key)?;
                 if current_topoheight <= max_topoheight {
                     return Ok(Some((last_topoheight, version)))
                 }
@@ -79,7 +78,7 @@ impl ContractEventCallbackProvider for RocksStorage {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, VersionedEventCallback), BlockchainError>> + Send + 'a, BlockchainError> {
+    ) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, VersionedEventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get event callbacks for contract {} event {} at maximum topoheight {}", contract, event_id, max_topoheight);
 
         let contract_id = self.get_contract_id(contract)?;
@@ -94,7 +93,7 @@ impl ContractEventCallbackProvider for RocksStorage {
 
                 let mut topo = Some(max_topoheight);
                 while let Some(current_topoheight) = topo {
-                    let version: VersionedEventCallback = self.load_from_disk(Column::VersionedEventCallbacks, &versioned_key)?;
+                    let version: VersionedEventCallbackRegistration = self.load_from_disk(Column::VersionedEventCallbacks, &versioned_key)?;
                     if current_topoheight <= max_topoheight {
                         let listener = self.get_contract_from_id(listener_id)?;
                         return Ok(Some((listener, current_topoheight, version)))
@@ -112,7 +111,7 @@ impl ContractEventCallbackProvider for RocksStorage {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, EventCallback), BlockchainError>> + Send + 'a, BlockchainError> {
+    ) -> Result<impl Iterator<Item = Result<(Hash, EventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get event callbacks for contract {} event {} at maximum topoheight {}", contract, event_id, max_topoheight);
 
         let contract_id = self.get_contract_id(contract)?;
@@ -127,7 +126,7 @@ impl ContractEventCallbackProvider for RocksStorage {
 
                 let mut topo = Some(max_topoheight);
                 while let Some(current_topoheight) = topo {
-                    let version: VersionedEventCallback = self.load_from_disk(Column::VersionedEventCallbacks, &versioned_key)?;
+                    let version: VersionedEventCallbackRegistration = self.load_from_disk(Column::VersionedEventCallbacks, &versioned_key)?;
                     if current_topoheight <= max_topoheight {
                         return Ok(match version.take() {
                             Some(callback) => {
