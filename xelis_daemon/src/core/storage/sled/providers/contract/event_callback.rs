@@ -50,7 +50,7 @@ impl ContractEventCallbackProvider for SledStorage {
             let version: VersionedEventCallbackRegistration = self.load_from_disk(
                 &self.versioned_contracts_event_callbacks,
                 &versioned_key,
-                DiskContext::EventCallback
+                DiskContext::ContractEventCallback
             )?;
 
             if current_topoheight <= max_topoheight {
@@ -91,7 +91,7 @@ impl ContractEventCallbackProvider for SledStorage {
                 let version: VersionedEventCallbackRegistration = self.load_from_disk(
                     &self.versioned_contracts_event_callbacks,
                     &versioned_key,
-                    DiskContext::EventCallback
+                    DiskContext::ContractEventCallback
                 )?;
 
                 if topoheight <= max_topoheight {
@@ -133,7 +133,7 @@ impl ContractEventCallbackProvider for SledStorage {
                 let version: VersionedEventCallbackRegistration = self.load_from_disk(
                     &self.versioned_contracts_event_callbacks,
                     &versioned_key,
-                    DiskContext::EventCallback
+                    DiskContext::ContractEventCallback
                 )?;
 
                 if topoheight <= max_topoheight {

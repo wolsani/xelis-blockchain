@@ -1,6 +1,7 @@
 mod data;
 mod balance;
 mod scheduled_execution;
+mod event_callback;
 
 use async_trait::async_trait;
 use log::trace;
