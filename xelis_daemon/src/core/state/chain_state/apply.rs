@@ -272,13 +272,10 @@ impl<'a> FinalizedChainState<'a> {
 
         // Start by storing the contracts
         debug!("Storing contracts");
-        for (hash, value) in self.contracts.iter() {
+        for (hash, value) in self.contracts {
             if let Some((state, module)) = value {
                 if state.should_be_stored() {
                     trace!("Saving contract {} at topoheight {}", hash, self.topoheight);
-                    // Prevent cloning the value
-                    let module = module.as_ref()
-                        .map(|v| Cow::Borrowed(v.as_ref()));
                     storage.set_last_contract_to(&hash, self.topoheight, &VersionedContractModule::new(module, state.get_topoheight())).await?;
                 }
             }
