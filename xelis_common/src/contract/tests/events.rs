@@ -20,6 +20,8 @@ async fn contract_event_flow() {
 
     let code = r#"
         fn on_contract_event(a: string, b: string) -> u64 {
+            assert(a == "hello");
+            assert(b == "world!");
             println(a + " " + b + " !");
             return 0
         }
