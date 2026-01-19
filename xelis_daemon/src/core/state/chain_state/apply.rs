@@ -633,6 +633,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         let contract = self.inner.internal_get_contract_module(&contract_hash).await?;
 
         // Find the contract cache in our cache map
+        // We apply the deposits below in case we have any
         let mut cache = self.contract_manager.caches.get(&contract_hash)
             .cloned()
             .unwrap_or_default();
@@ -670,6 +671,13 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         }
 
         let mainnet = self.inner.storage.is_mainnet();
+
+        // We initialize the cache map with only the current contract
+        // because we've applied the deposits for it
+        let caches = [
+            (contract_hash.as_ref().clone(), cache)
+        ].into();
+
         let state = ContractChainState {
             // TODO: only available on non-mainnet networks & enabled by a config
             debug_mode: !mainnet,
@@ -681,6 +689,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             caller,
             logs: Vec::new(),
             changes: ChainStateChanges {
+                caches,
                 // Event trackers
                 tracker: self.contract_manager.tracker.clone(),
                 // Assets cache owned by this contract
