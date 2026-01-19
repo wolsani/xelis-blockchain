@@ -210,13 +210,15 @@ pub struct ChainState<'a> {
     pub caller: ContractCaller<'a>,
     // All others caches if initialized
     pub global_caches: &'a HashMap<Hash, ContractCache>,
+    // All modules already loaded
+    // This is persisted across the calls
+    pub global_modules: &'a HashMap<Cow<'a, Hash>, Option<(VersionedState, Option<Cow<'a, ContractModule>>)>>,
+    // Loaded modules during this execution
+    pub loaded_modules: HashMap<Hash, Option<(VersionedState, Option<ContractModule>)>>,
     // gas being injected to the invoke gas limit by contracts
     // it is kept in insertion order to rollback funds to contract
     // in case they were not fully used
     pub injected_gas: IndexMap<Source, u64>,
-    // All modules loaded
-    // This is persisted across the calls
-    pub modules: HashMap<Hash, Option<ContractModule>>,
     // The contract logs
     // This is similar to an event log
     pub logs: Vec<ContractLog>,

@@ -43,10 +43,13 @@ pub fn create_contract(state: &mut MockChainState, code: &str) -> anyhow::Result
     let module = compile_contract(&state.env, code)?;
 
     let hash = Hash::new(rand::random());
-    state.contracts.insert(hash.clone(), Some(ContractModule {
-        version: Default::default(),
-        module: Arc::new(module.clone()),
-    }));
+    state.internal_set_contract_module(
+        hash.clone(),
+        ContractModule {
+            version: Default::default(),
+            module: Arc::new(module),
+        },
+    );
 
     Ok(hash)
 }

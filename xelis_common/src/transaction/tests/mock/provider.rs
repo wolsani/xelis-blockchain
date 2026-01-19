@@ -5,13 +5,15 @@ use async_trait::async_trait;
 use xelis_vm::ValueCell;
 
 use crate::{
+    account::CiphertextCache,
+    asset::AssetData,
     block::*,
     contract::{
         ContractModule,
         ContractProvider,
         ContractStorage,
     },
-    crypto::Hash,
+    crypto::Hash
 };
 
 
@@ -41,7 +43,7 @@ impl ContractProvider for MockStorageProvider {
         Ok(None)
     }
 
-    async fn get_account_balance_for_asset(&self, _: &crate::crypto::PublicKey, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, crate::account::CiphertextCache)>, anyhow::Error> {
+    async fn get_account_balance_for_asset(&self, _: &crate::crypto::PublicKey, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error> {
         Ok(None)
     }
 
@@ -53,7 +55,7 @@ impl ContractProvider for MockStorageProvider {
         Ok(false)
     }
 
-    async fn load_asset_data(&self, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, crate::asset::AssetData)>, anyhow::Error> {
+    async fn load_asset_data(&self, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
         Ok(None)
     }
 
@@ -65,7 +67,7 @@ impl ContractProvider for MockStorageProvider {
         Ok(false)
     }
 
-    async fn load_contract_module(&self, _: &Hash, _: TopoHeight) -> Result<Option<ContractModule>, anyhow::Error> {
+    async fn load_contract_module(&self, _: &Hash, _: TopoHeight) -> Result<Option<(TopoHeight, Option<ContractModule>)>, anyhow::Error> {
         Ok(None)
     }
 

@@ -169,7 +169,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
     /// Even if the execution failed, the caches should be updated
     async fn set_modules_cache(
         &mut self,
-        modules: HashMap<Hash, Option<ContractModule>>,
+        modules: HashMap<Hash, Option<(VersionedState, Option<ContractModule>)>>,
     ) -> Result<(), E>;
 
     /// Merge the contract cache with the stored one

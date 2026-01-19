@@ -302,7 +302,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     let mut logs = chain_state.logs;
 
     let gas_injections = chain_state.injected_gas;
-    let modules = chain_state.modules;
+    let modules = chain_state.loaded_modules;
 
     // On success: it is well allocated to either burned coins or scheduled execution
     // On failure: it is included in the gas refund

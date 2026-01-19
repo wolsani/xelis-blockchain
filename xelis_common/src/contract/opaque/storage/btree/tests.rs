@@ -176,10 +176,10 @@ async fn btree_insert_get_delete_roundtrip() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -208,10 +208,10 @@ async fn btree_seek_biases_work() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -247,10 +247,10 @@ async fn btree_cursor_iteration_matches_ordering() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -294,10 +294,10 @@ async fn btree_cursor_scans_random_u64s_in_order() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -371,10 +371,10 @@ async fn btree_allows_duplicate_keys_and_ordered_traversal() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -420,10 +420,10 @@ async fn btree_cursor_scans_duplicate_bucket() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -489,10 +489,10 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -549,10 +549,10 @@ async fn btree_seek_handles_missing_key_biases() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -604,10 +604,10 @@ async fn btree_seek_equal_strict_bias_uses_ancestors() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -678,10 +678,10 @@ async fn btree_cursor_key_value_and_exhaustion() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -745,10 +745,10 @@ async fn btree_cursor_allows_deleting_during_scan() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -814,10 +814,10 @@ async fn btree_cursor_selective_delete_during_scan() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -912,10 +912,10 @@ async fn btree_cursor_descends_and_deletes() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -995,10 +995,10 @@ async fn btree_cursor_consecutive_deletes() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1068,10 +1068,10 @@ async fn btree_cursor_exhausts_tree() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1163,14 +1163,14 @@ async fn btree_insert_duplicate_allocates_new_node() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    });
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1221,10 +1221,10 @@ async fn btree_delete_variants_cover_storage_cleanup() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1292,10 +1292,10 @@ async fn btree_cursor_cache_refresh_tracks_state() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1354,10 +1354,10 @@ async fn btree_cursor_detects_stale_value_update() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1431,10 +1431,10 @@ async fn btree_cache_prefetch_reads_values() {
     let contract = Hash::zero();
     let mut provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1462,10 +1462,10 @@ async fn btree_seek_empty_and_bounds() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1516,10 +1516,10 @@ async fn btree_seek_first_last_works() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1558,10 +1558,10 @@ async fn btree_namespace_isolation() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1624,10 +1624,10 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1649,10 +1649,10 @@ async fn btree_storage_usage_records_reads() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1676,10 +1676,10 @@ async fn btree_storage_usage_records_writes() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1702,10 +1702,10 @@ async fn btree_storage_usage_single_insert_reports_activity() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1728,10 +1728,10 @@ async fn btree_storage_usage_delete_reports_activity() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1778,10 +1778,10 @@ async fn btree_len_tracks_insert_and_delete() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1884,10 +1884,10 @@ async fn btree_treap_invariants_after_random_inserts_and_deletes() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1925,10 +1925,10 @@ async fn btree_treap_rotate_left_at_root_updates_links() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -1977,10 +1977,10 @@ async fn btree_treap_rotate_right_under_parent_updates_links() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -2033,10 +2033,10 @@ async fn btree_treap_seek_with_duplicates_bias_matrix() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
@@ -2074,10 +2074,10 @@ async fn btree_treap_predecessor_through_duplicate_bucket() {
     let contract = Hash::zero();
     let provider = MockStorageProvider::default();
     let mut chain = MockChainState::new();
-    chain.contracts.insert(contract.clone(), Some(ContractModule {
+    chain.internal_set_contract_module(contract.clone(), ContractModule {
         module: Arc::new(Module::new()),
         version: ContractVersion::V0,
-    }));
+    });
     let (_, mut state) = chain.get_contract_environment_for(
         Cow::Borrowed(&contract),
         None,
