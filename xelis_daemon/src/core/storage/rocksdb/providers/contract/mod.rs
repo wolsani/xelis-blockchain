@@ -108,10 +108,10 @@ impl ContractProvider for RocksStorage {
     }
 
     // Load a contract module
-    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<ContractModule>, anyhow::Error> {
+    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ContractModule>)>, anyhow::Error> {
         trace!("load contract module for contract {} at topoheight {}", contract, topoheight);
         let res = self.get_contract_at_maximum_topoheight_for(contract, topoheight).await?;
-        Ok(res.and_then(|(_, module)| module.take().map(|v| v.into_owned())))
+        Ok(res.map(|(topoheight, module)| (topoheight, module.take().map(|v| v.into_owned()))))
     }
 
     // Check if a contract has already a callback registered for an event at topoheight

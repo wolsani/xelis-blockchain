@@ -74,7 +74,6 @@ struct ContractManager<'b> {
     // global assets cache
     assets: HashMap<Hash, Option<AssetChanges>>,
     tracker: ContractEventTracker,
-    modules: HashMap<Hash, Option<ContractModule>>,
     // Planned executions for the current block
     executions: ExecutionsChanges,
     // All events callback to process
@@ -115,7 +114,7 @@ pub struct FinalizedChainState<'b> {
     // Current topoheight of the snapshot
     topoheight: TopoHeight,
     // All contracts updated
-    contracts: HashMap<Cow<'b, Hash>, (VersionedState, Option<Cow<'b, ContractModule>>)>,
+    contracts: HashMap<Cow<'b, Hash>, Option<(VersionedState, Option<Cow<'b, ContractModule>>)>>,
     // Block header version
     block_version: BlockVersion,
 }
@@ -273,13 +272,15 @@ impl<'a> FinalizedChainState<'a> {
 
         // Start by storing the contracts
         debug!("Storing contracts");
-        for (hash, (state, module)) in self.contracts.iter() {
-            if state.should_be_stored() {
-                trace!("Saving contract {} at topoheight {}", hash, self.topoheight);
-                // Prevent cloning the value
-                let module = module.as_ref()
-                    .map(|v| Cow::Borrowed(v.as_ref()));
-                storage.set_last_contract_to(&hash, self.topoheight, &VersionedContractModule::new(module, state.get_topoheight())).await?;
+        for (hash, value) in self.contracts.iter() {
+            if let Some((state, module)) = value {
+                if state.should_be_stored() {
+                    trace!("Saving contract {} at topoheight {}", hash, self.topoheight);
+                    // Prevent cloning the value
+                    let module = module.as_ref()
+                        .map(|v| Cow::Borrowed(v.as_ref()));
+                    storage.set_last_contract_to(&hash, self.topoheight, &VersionedContractModule::new(module, state.get_topoheight())).await?;
+                }
             }
         }
 
@@ -632,12 +633,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
 
         // Find the contract module in our cache
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
-        let contract = self.inner.contracts.get(&contract_hash)
-            .ok_or_else(|| BlockchainError::ContractNotFound(contract_hash.as_ref().clone()))
-            .and_then(|(_, module)| module.as_ref()
-                .map(|m| m.as_ref())
-                .ok_or_else(|| BlockchainError::ContractModuleNotFound(contract_hash.as_ref().clone()))
-            )?;
+        let contract = self.inner.internal_get_contract_module(&contract_hash).await?;
 
         // Find the contract cache in our cache map
         let mut cache = self.contract_manager.caches.get(&contract_hash)
@@ -694,7 +690,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
                 assets: self.contract_manager.assets.clone(),
                 ..Default::default()
             },
-            modules: self.contract_manager.modules.clone(),
+            global_modules: &self.inner.contracts,
             // Global caches (all contracts)
             global_caches: &self.contract_manager.caches,
             // This is not shared across TXs, so we create
@@ -710,6 +706,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             permission,
             gas_fee_allowance: 0,
             environments: Cow::Borrowed(self.inner.environments),
+            loaded_modules: Default::default(),
         };
 
         let environment = self.environments.get(&contract.version)
@@ -756,9 +753,15 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
 
     async fn set_modules_cache(
         &mut self,
-        modules: HashMap<Hash, Option<ContractModule>>,
+        modules: HashMap<Hash, Option<(VersionedState, Option<ContractModule>)>>,
     ) -> Result<(), BlockchainError> {
-        self.contract_manager.modules = modules;
+        for (hash, value) in modules {
+            debug!("set module cache for contract {}", hash);
+            self.inner.contracts.insert(
+                Cow::Owned(hash),
+                value.map(|(state, module)| (state, module.map(Cow::Owned)))
+            );
+        }
 
         Ok(())
     }
@@ -964,7 +967,8 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     ) -> Result<(), BlockchainError> {
         debug!("Removing contract module for contract {}", hash);
 
-        let (state, contract) = self.inner.contracts.get_mut(hash)
+        let (state, contract) = self.inner.internal_get_versioned_contract(Cow::Borrowed(hash)).await?
+            .as_mut()
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
         state.mark_updated();
