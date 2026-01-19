@@ -5,8 +5,8 @@ use super::*;
 #[tokio::test]
 async fn contract_event_flow() {
     // Create a contract that emits an event when called
-    // Another event that register an event listener from previous one
-    // Call the first contract and verify the event is captured
+    // Another contract that register an event listener from previous one
+    // Call the first contract and verify the event is captured & well processed
 
     let code = r#"
         entry call_event() {
