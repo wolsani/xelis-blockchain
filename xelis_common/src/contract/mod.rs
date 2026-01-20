@@ -1450,7 +1450,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
                 ("commitment", ristretto_type.clone()),
                 ("transcript", transcript_type.clone()),
                 // Proof bits
-                ("n", Type::U64),
+                ("n", Type::U8),
             ],
             FunctionHandler::Sync(range_proof_verify_single),
             1_500_000,
@@ -1465,7 +1465,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
                 ("commitments", Type::Array(Box::new(ristretto_type.clone()))),
                 ("transcript", transcript_type.clone()),
                 // Proof bits
-                ("n", Type::U64),
+                ("n", Type::U8),
             ],
             FunctionHandler::Sync(range_proof_verify_multiple),
             1_515_000,
