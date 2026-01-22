@@ -671,6 +671,13 @@ pub struct GetContractDataEntriesParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetContractTransactionsParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractDataEntry {
     pub key: ValueCell,
     pub value: ValueCell,
