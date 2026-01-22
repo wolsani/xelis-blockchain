@@ -2419,8 +2419,11 @@ impl<S: Storage> Blockchain<S> {
 
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
+                    
                     // Link the transaction hash to this block
-                    if chain_state.link_tx_to_block(&tx_hash, &hash) {
+                    // If the TX was already executed in chain state, we can skip it
+                    // If its a contract invocation, we pass the contract so we can link it for easier lookup
+                    if chain_state.link_tx_to_block(&tx_hash, &hash, tx.invoked_contract()) {
                         debug!("Tx {} is already executed according to cache, skipping...", tx_hash);
                         continue;
                     }

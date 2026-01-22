@@ -93,7 +93,8 @@ pub struct ApplicableChainState<'s, 'b, S: Storage> {
     contract_manager: ContractManager<'b>,
     total_fees: u64,
     total_fees_burned: u64,
-    transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>)>,
+    // Transactions links to store: tx hash -> (blocks linked, executed in, contract)
+    transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>, Option<&'b Hash>)>,
 }
 
 pub struct FinalizedChainState<'b> {
@@ -105,7 +106,8 @@ pub struct FinalizedChainState<'b> {
     contract_manager: ContractManager<'b>,
     // current block hash
     block_hash: &'b Hash,
-    transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>)>,
+    // Transactions links to store: tx hash -> (blocks linked, executed in, contract)
+    transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>, Option<&'b Hash>)>,
     // Balances of the receiver accounts
     receiver_balances: HashMap<Cow<'b, PublicKey>, HashMap<Cow<'b, Hash>, VersionedBalance>>,
     // Sender accounts
@@ -132,7 +134,7 @@ impl<'a> FinalizedChainState<'a> {
         storage.set_topo_height_for_block(&self.block_hash, self.topoheight).await?;
 
         // Apply transaction links
-        for (tx_hash, (linked_blocks, executed_in)) in self.transactions_links {
+        for (tx_hash, (linked_blocks, executed_in, contract)) in self.transactions_links {
             trace!("linking tx {} to blocks", tx_hash);
 
             let mut blocks = if storage.is_tx_linked_to_blocks(&tx_hash).await? {
@@ -147,6 +149,11 @@ impl<'a> FinalizedChainState<'a> {
             if let Some(executed_in) = executed_in {
                 trace!("marking tx {} as executed in block {}", tx_hash, executed_in);
                 storage.mark_tx_as_executed_in_block(&tx_hash, &executed_in).await?;
+            }
+
+            if let Some(contract) = contract {
+                trace!("linking tx {} to contract {}", tx_hash, contract);
+                storage.add_tx_for_contract(&contract, &tx_hash).await?;
             }
         }
 
@@ -895,20 +902,32 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
 
     // Returns if the TX was already executed
     #[inline]
-    pub fn link_tx_to_block(&mut self, tx_hash: &'b Hash, block_hash: &'b Hash) -> bool {
-        let (set, executed) = self.transactions_links.entry(tx_hash)
-            .or_insert_with(|| (IndexSet::new(), None));
+    pub fn link_tx_to_block(&mut self, tx_hash: &'b Hash, block_hash: &'b Hash, contract: Option<&'b Hash>) -> bool {
+        let (set, executed, contract_called) = self.transactions_links.entry(tx_hash)
+            .or_insert_with(|| (IndexSet::new(), None, None));
 
         set.insert(block_hash);
+        if let Some(contract) = contract {
+            *contract_called = Some(contract);
+        }
+
         executed.is_some()
     }
 
+    // Mark the TX as executed in the given block
+    #[inline]
     pub fn mark_tx_as_executed_in_block(&mut self, tx_hash: &'b Hash, block_hash: &'b Hash) -> Result<(), BlockchainError> {
-        let (set, executed) = self.transactions_links.entry(tx_hash)
-            .or_insert_with(|| (IndexSet::new(), None));
+        let (set, executed, _) = self.transactions_links.get_mut(tx_hash)
+            .ok_or(BlockchainError::Unknown)?;
 
         set.insert(block_hash);
+
+        if executed.is_some() {
+            return Err(BlockchainError::TransactionAlreadyExecuted(tx_hash.clone()));
+        }
+
         *executed = Some(block_hash);
+
         Ok(())
     }
 

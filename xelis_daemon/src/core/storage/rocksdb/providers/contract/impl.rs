@@ -2,15 +2,17 @@ use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
-    crypto::Hash
+    crypto::Hash,
+    serializer::Skip
 };
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{Column, Contract, ContractId, IteratorMode},
         ContractProvider,
         RocksStorage,
-        VersionedContractModule
+        VersionedContractModule,
+        rocksdb::{Column, Contract, ContractId, IteratorMode},
+        snapshot::Direction
     }
 };
 
@@ -183,10 +185,40 @@ impl ContractProvider for RocksStorage {
         trace!("count contracts");
         self.get_last_contract_id()
     }
+
+    async fn add_tx_for_contract(&mut self, contract: &Hash, tx: &Hash) -> Result<(), BlockchainError> {
+        trace!("add tx {} for contract {}", tx, contract);
+
+        let contract_id = self.get_contract_id(contract)?;
+        let key = Self::get_contract_transaction_key(contract_id, tx);
+
+        self.insert_into_disk(Column::ContractsTransactions, key, &[])?;
+
+        Ok(())
+    }
+
+    async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get txs for contract {}", contract);
+
+        let contract_id = self.get_contract_id(contract)?;
+        let prefix = contract_id.to_be_bytes();
+
+        self.iter_keys::<Skip<8, Hash>>(Column::ContractsTransactions, IteratorMode::From(&prefix, Direction::Forward))
+            .map(|iter| iter.map(|v| v.map(|key| key.0)))
+    }
 }
 
 impl RocksStorage {
     const NEXT_CONTRACT_ID: &[u8] = b"NCID";
+
+    // Generate the key for a contract transaction entry
+    #[inline]
+    pub fn get_contract_transaction_key(contract_id: ContractId, tx: &Hash) -> [u8; 40] {
+        let mut key = [0u8; 40];
+        key[0..8].copy_from_slice(&contract_id.to_be_bytes());
+        key[8..40].copy_from_slice(tx.as_bytes());
+        key
+    }
 
     fn get_last_contract_id(&self) -> Result<ContractId, BlockchainError> {
         trace!("get current contract id");
@@ -208,7 +240,7 @@ impl RocksStorage {
         self.load_optional_from_disk(Column::Contracts, contract)
     }
 
-    pub(super) fn get_contract_id(&self, contract: &Hash) -> Result<ContractId, BlockchainError> {
+    pub fn get_contract_id(&self, contract: &Hash) -> Result<ContractId, BlockchainError> {
         trace!("get contract id");
         self.get_optional_contract_id(contract)?
             .ok_or_else(|| BlockchainError::ContractNotFound(contract.clone()))

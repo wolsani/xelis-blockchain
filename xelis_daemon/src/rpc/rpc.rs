@@ -447,6 +447,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method_with_params("get_contract_assets", async_handler!(get_contract_assets::<S>));
     handler.register_method_with_params("get_contracts", async_handler!(get_contracts::<S>));
     handler.register_method_with_params("get_contract_data_entries", async_handler!(get_contract_data_entries::<S>));
+    handler.register_method_with_params("get_contract_transactions", async_handler!(get_contract_transactions::<S>));
 
     if allow_mining_methods {
         handler.register_method_with_params("get_block_template", async_handler!(get_block_template::<S>));
@@ -1009,8 +1010,7 @@ async fn get_peers<S: Storage>(context: &Context) -> Result<Value, InternalRpcEr
 }
 
 async fn get_mempool<S: Storage>(context: &Context, params: GetMempoolParams) -> Result<Value, InternalRpcError> {
-    let maximum = params.maximum.filter(|v| *v <= MAX_TXS)
-        .unwrap_or(MAX_TXS);
+    let maximum = check_maximum(params.maximum, MAX_TXS)?;
     let skip = params.skip.unwrap_or(0);
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -2173,19 +2173,23 @@ async fn get_contract_assets<S: Storage>(context: &Context, params: GetContractA
     Ok(assets)
 }
 
-async fn get_contracts<S: Storage>(context: &Context, params: GetContractsParams) -> Result<Vec<Hash>, InternalRpcError> {
-    let blockchain: &Arc<Blockchain<S>> = context.get()?;
-
-    let maximum = if let Some(maximum) = params.maximum {
-        if maximum > MAX_CONTRACTS {
+// Check requested maximum against limit
+fn check_maximum(requested: Option<usize>, limit: usize) -> Result<usize, InternalRpcError> {
+    if let Some(maximum) = requested {
+        if maximum > limit {
             return Err(InternalRpcError::InvalidJSONRequest)
-                .context(format!("Maximum contracts requested cannot be greater than {}", MAX_CONTRACTS))?
+                .context(format!("Maximum requested cannot be greater than {}", limit))?
         }
-        maximum
+        Ok(maximum)
     } else {
-        MAX_CONTRACTS
-    };
+        Ok(limit)
+    }
+}
 
+async fn get_contracts<S: Storage>(context: &Context, params: GetContractsParams) -> Result<Vec<Hash>, InternalRpcError> {
+    let maximum = check_maximum(params.maximum, MAX_CONTRACTS)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let current_topoheight = blockchain.get_topo_height().await; 
     let maximum_topoheight = if let Some(maximum) = params.maximum_topoheight {
         if maximum > current_topoheight {
@@ -2207,7 +2211,10 @@ async fn get_contracts<S: Storage>(context: &Context, params: GetContractsParams
     Ok(contracts)
 }
 
+/// Retrieve contract data entries
 async fn get_contract_data_entries<S: Storage>(context: &Context, params: GetContractDataEntriesParams<'_>) -> Result<Vec<ContractDataEntry>, InternalRpcError> {
+    let maximum = check_maximum(params.maximum, MAX_CONTRACTS_ENTRIES)?;
+
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let current_topoheight = storage.chain_cache().await.topoheight;
@@ -2226,7 +2233,7 @@ async fn get_contract_data_entries<S: Storage>(context: &Context, params: GetCon
 
     let stream = stream.boxed();
     let entries = stream.skip(params.skip.unwrap_or(0))
-        .take(params.maximum.unwrap_or(MAX_CONTRACTS_ENTRIES))
+        .take(maximum)
         .map_ok(|(key, value)| ContractDataEntry {
             key,
             value,
@@ -2236,6 +2243,23 @@ async fn get_contract_data_entries<S: Storage>(context: &Context, params: GetCon
         .context("Error while collecting contract entries")?;
 
     Ok(entries)
+}
+
+/// Retrieve contract transactions
+async fn get_contract_transactions<S: Storage>(context: &Context, params: GetContractTransactionsParams<'_>) -> Result<Vec<Hash>, InternalRpcError> {
+    let maximum = check_maximum(params.maximum, MAX_CONTRACTS_ENTRIES)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let iter = storage.get_contract_transactions(&params.contract).await
+        .context("Error while retrieving contract transactions")?;
+
+    let transactions = iter.skip(params.skip.unwrap_or_default())
+        .take(maximum)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(transactions)
 }
 
 async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, params: GetContractBalanceAtTopoHeightParams<'_>) -> Result<Versioned<u64>, InternalRpcError> {

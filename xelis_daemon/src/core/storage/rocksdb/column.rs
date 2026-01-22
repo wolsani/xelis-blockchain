@@ -117,6 +117,10 @@ pub enum Column {
     // {topoheight}{contract_id}{event_id}{listener_id} => {version}
     VersionedContractEventCallbacks,
 
+    // Link between a contract and its transactions
+    // {contract_id}{tx_hash} => []
+    ContractsTransactions,
+
     // {topoheight}{asset_id} => {version}
     VersionedAssetsSupply
 }

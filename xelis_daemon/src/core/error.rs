@@ -153,6 +153,8 @@ pub enum DiskContext {
 
 #[derive(Error, Debug, EnumDiscriminants)]
 pub enum BlockchainError {
+    #[error("transaction already executed: {0}")]
+    TransactionAlreadyExecuted(Hash),
     #[error("contract environment not found for version: {0}")]
     ContractEnvironmentNotFound(ContractVersion),
     #[error("invalid contract version")]

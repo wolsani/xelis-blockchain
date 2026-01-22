@@ -73,6 +73,13 @@ impl TransactionProvider for RocksStorage {
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("delete transaction {}", hash);
         let transaction = self.get_transaction(hash).await?;
+        if let Some(contract) = transaction.invoked_contract() {
+            let contract_id = self.get_contract_id(&contract)?;
+            let key = Self::get_contract_transaction_key(contract_id, hash);
+
+            self.remove_from_disk(Column::ContractsTransactions, &key)?;
+        }
+
         self.remove_from_disk(Column::Transactions, hash)?;
         Ok(transaction)
     }

@@ -185,6 +185,9 @@ pub struct SledStorage {
     pub(super) contracts_event_callbacks: Tree,
     // Versioned Event callbacks: {topoheight}{contract}{event_id}{listener_contract} => VersionedEventCallback
     pub(super) versioned_contracts_event_callbacks: Tree,
+    // Transactions per contract
+    // {contract_hash}{tx_hash} => [empty]
+    pub(super) contracts_transactions: Tree,
 
     // opened DB used for assets to create dynamic assets
     pub(super) db: sled::Db,
@@ -281,6 +284,7 @@ impl SledStorage {
             contracts_event_callbacks: sled.open_tree("contracts_event_callbacks")?,
             versioned_contracts_event_callbacks: sled.open_tree("versioned_contracts_event_callbacks")?,
             versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
+            contracts_transactions: sled.open_tree("contracts_transactions")?,
             db: sled,
             cache: StorageCache::new(cache_size),
             snapshot: None,
