@@ -3030,6 +3030,40 @@ It contains, the refunded gas amount, exit code and transfers.
 }
 ```
 
+#### Get Contract Transactions
+Retrieve all transaction hashes that have interacted with the requested contract.
+
+##### Method `get_contract_transactions`
+
+##### Parameters
+
+|    Name    |     Type    | Required |           Note           |
+|:----------:|:-----------:|:--------:|:------------------------:|
+|  contract  |     Hash    | Required | Contract hash for lookup |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_transactions",
+    "id": 1,
+    "params": {
+        "contract": "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "a7e35dfcbc333772e7bb47ad3d86a981d485950e2e5b76d3fcdeeba2742c9593",
+    ]
+}
+```
+
 #### Get Contract Data
 Retrieve the contract data with the requested key.
 
