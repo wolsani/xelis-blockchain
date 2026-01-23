@@ -103,7 +103,15 @@ When a block was previously executed in the DAG but due to DAG reorg, got rewind
 
 ##### On Event
 ```json
-
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_hash": "e42555732f8ca3a55bf97cbb8d63c73c0e8db8b376f60f4794871d468ffe83fc",
+        "event": "block_orphaned",
+        "old_topoheight": 641917
+    }
+}
 ```
 
 #### Stable Height Changed
@@ -122,6 +130,25 @@ This means no new blocks can be added at this height or below.
         "event": "stable_height_changed",
         "new_stable_height": 611815,
         "previous_stable_height": 611814
+    }
+}
+```
+
+#### Stable TopoHeight Changed
+
+When the DAG found a new stable topoheight.
+
+##### Name `stable_topoheight_changed`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "stable_topoheight_changed",
+        "new_stable_topoheight": 611815,
+        "previous_stable_topoheight": 611814
     }
 }
 ```
@@ -234,6 +261,128 @@ When a transaction has been executed by the DAG order.
         "event": "transaction_executed",
         "topoheight": 641928,
         "tx_hash": "591e28f8e03e234804fe51f6beef3553698f31015288f93a088f42430bbc0130"
+    }
+}
+```
+
+#### Invoke Contract
+
+When the contract has been invoked and executed by the DAG order.
+
+##### Name `invoke_contract`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "invoke_contract",
+        "tx_hash": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+        "contract_logs": [...]
+    }
+}
+```
+
+#### Contract Transfers
+
+When a contract has transfered any asset to the receiver address, it is aggregated.
+
+##### Name `contract_transfers`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "contract_transfers",
+        "executions": [
+            {
+                "key": {
+                    "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+                    "caller": "4951a4d10b8921c8e08d3c380993305a1e4706cbba606e2e79ffdfc06c54eb5f"
+                },
+                "value": {
+                    "transfers": {
+                        "0000000000000000000000000000000000000000000000000000000000000000": 1000
+                    }
+                }
+            }
+        ],
+        "block_timestamp": 1723503200,
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+        "contract_logs": [...]
+    }
+}
+```
+
+#### Contract Event
+
+When a contract fire an event.
+
+##### Name `contract_event`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "contract_event",
+        "event_id": 42,
+        "data": {
+            "type": "primitive",
+            "value": {
+                "type": "string",
+                "value": "Hello World!"
+            }
+        },
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+    }
+}
+```
+
+#### Contract Deploy
+
+When a contract has been deployed.
+
+##### Name `contract_deploy`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "contract_deploy",
+        "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+    }
+}
+```
+
+#### New Asset
+
+When a new asset has been registered.
+
+##### Name `new_asset`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "new_asset",
+        "asset": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
     }
 }
 ```
