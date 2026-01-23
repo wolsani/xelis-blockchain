@@ -14,7 +14,7 @@ use xelis_common::{
             StableTopoHeightChangedEvent,
             TransactionExecutedEvent,
             GetTransactionResult,
-            NewContractEvent,
+            ContractDeployEvent,
             InvokeContractEvent,
             NewAssetEvent,
             ContractTransfersEvent,
@@ -2482,23 +2482,23 @@ impl<S: Storage> Blockchain<S> {
                         // Check TX type for RPC events
                         match tx.get_data() {
                             TransactionType::InvokeContract(payload) => {
-                                let event = NotifyEvent::InvokeContract {
+                                let event = NotifyEvent::ContractInvoke {
                                     contract: payload.contract.clone(),
                                 };
 
                                 if should_track_events.contains(&event) {
                                     let is_mainnet = self.network.is_mainnet();
 
-                                    if let Some(contract_outputs) = chain_state.get_contract_logs_for_tx(&tx_hash) {
-                                        let contract_outputs = contract_outputs.into_iter()
-                                        .map(|output| RPCContractLog::from_log(output, is_mainnet))
+                                    if let Some(contract_logs) = chain_state.get_contract_logs_for_tx(&tx_hash) {
+                                        let contract_logs = contract_logs.into_iter()
+                                        .map(|log| RPCContractLog::from_log(log, is_mainnet))
                                         .collect::<Vec<_>>();
 
                                         let value = json!(InvokeContractEvent {
                                             tx_hash: Cow::Borrowed(&tx_hash),
                                             block_hash: Cow::Borrowed(&hash),
                                             topoheight: highest_topo,
-                                            contract_outputs,
+                                            contract_logs,
                                         });
 
                                         events.entry(event)
@@ -2508,13 +2508,13 @@ impl<S: Storage> Blockchain<S> {
                                 }
                             },
                             TransactionType::DeployContract(_) => {
-                                if should_track_events.contains(&NotifyEvent::DeployContract) {
-                                    let value = json!(NewContractEvent {
+                                if should_track_events.contains(&NotifyEvent::ContractDeploy) {
+                                    let value = json!(ContractDeployEvent {
                                         contract: Cow::Borrowed(&tx_hash),
                                         block_hash: Cow::Borrowed(&hash),
                                         topoheight: highest_topo,
                                     });
-                                    events.entry(NotifyEvent::DeployContract)
+                                    events.entry(NotifyEvent::ContractDeploy)
                                         .or_insert_with(Vec::new)
                                         .push(value);
                                 }
