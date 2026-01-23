@@ -1033,20 +1033,14 @@ pub enum NotifyEvent {
     TransactionExecuted,
     // When the contract has been invoked
     // This allows to track all the contract invocations
-    InvokeContract {
+    ContractInvoke {
         contract: Hash
     },
-    // When a contract has transfered any token
+    // When a contract has transfered any asset
     // to the receiver address
     // It contains ContractTransfersEvent struct as value
     ContractTransfers {
         address: Address
-    },
-    // When a contract call has failed for
-    // the given address
-    // It contains ContractCallError struct as value
-    InvokeContractError {
-        address: Address,
     },
     // When a contract fire an event
     // It contains ContractEvent struct as value
@@ -1058,7 +1052,7 @@ pub enum NotifyEvent {
         id: Option<u64>
     },
     // When a new contract has been deployed
-    DeployContract,
+    ContractDeploy,
     // When a new asset has been registered
     // It contains NewAssetEvent struct as value
     NewAsset,
@@ -1232,12 +1226,12 @@ pub struct InvokeContractEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
-    pub contract_outputs: Vec<RPCContractLog<'a>>
+    pub contract_logs: Vec<RPCContractLog<'a>>
 }
 
-// Value of NotifyEvent::NewContract
+// Value of NotifyEvent::DeployContract
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct NewContractEvent<'a> {
+pub struct ContractDeployEvent<'a> {
     pub contract: Cow<'a, Hash>,
     pub block_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
