@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
     time::Duration
 };
-use futures::{stream, StreamExt, TryStreamExt};
+use futures::{stream::{self, FuturesUnordered}, StreamExt, TryStreamExt};
 use indexmap::IndexMap;
 use thiserror::Error;
 use anyhow::{Context, Error};
@@ -702,6 +702,68 @@ impl NetworkHandler {
         Ok(())
     }
 
+    // Helper method to process a single balance update with concurrent block processing
+    async fn process_balance_update(&self, address: &Address, asset: Hash, mut balance: CiphertextCache, topoheight: u64, block_response: RPCBlockResponse<'static>, outputs: GetContractsOutputsResult<'static>, balances: bool, highest_version: bool, highest_nonce: Arc<Mutex<Option<u64>>>) -> Result<(), Error> {
+        debug!("Processing topoheight {}", topoheight);
+        let timestamp = block_response.timestamp;
+        let changes = self.process_block(address, block_response, topoheight, false, true).await?;
+
+        // It was requested at the same time of the block processing, so we can handle it now
+        let assets = self.handle_contracts_outputs(outputs.executions, topoheight, timestamp, true).await?;
+        trace!("Contract outputs at topoheight {} affected {} assets", topoheight, assets.len());
+
+        // Check if a change occured, we are the highest version and update balances is requested
+        if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
+            let mut storage = self.wallet.get_storage().write().await;
+
+            // Set the highest nonce we know
+            let mut highest_nonce_guard = highest_nonce.lock().await;
+            if highest_nonce_guard.is_none() {
+                // Get the highest nonce from storage
+                debug!("Highest nonce is not set, fetching it from storage");
+                *highest_nonce_guard = Some(storage.get_nonce()?);
+            }
+
+            // Store only the highest nonce
+            // Because if we are building queued transactions, it may break our queue
+            // Our we couldn't submit new txs before they get removed from mempool
+            if let Some(nonce) = nonce.filter(|n| highest_nonce_guard.as_ref().map(|h| *h < *n).unwrap_or(true)) {
+                debug!("Storing new highest nonce {}", nonce);
+                storage.set_nonce(nonce)?;
+                *highest_nonce_guard = Some(nonce);
+            }
+            drop(highest_nonce_guard);
+
+            // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
+            let store = storage.get_balance_for(&asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);
+            if store {
+                let plaintext_balance = if let Some(plaintext_balance) = storage.get_unconfirmed_balance_decoded_for(&asset, &balance.compressed()).await? {
+                    plaintext_balance
+                } else {
+                    trace!("Decrypting balance for asset {}", asset);
+                    let ciphertext = balance.decompressed()?;
+                    let max_supply = storage.get_asset(&asset).await?
+                        .get_max_supply();
+
+                    self.wallet.decrypt_ciphertext_with(ciphertext.clone(), max_supply.get_max()).await?
+                        .context(format!("Couldn't decrypt the ciphertext for {} at topoheight {}", asset, topoheight))?
+                };
+
+                debug!("Storing balance from topoheight {} for asset {} ({}) {}", topoheight, asset, balance, plaintext_balance);
+                // Store the new balance
+                storage.set_balance_for(&asset, Balance::new(plaintext_balance, balance, topoheight)).await?;
+
+                // Propagate the event
+                self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
+                    asset,
+                    balance: plaintext_balance
+                })).await;
+            }
+        }
+
+        Ok(())
+    }
+
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
     // When the block is requested, we don't limit the syncing to asset in parameter
     async fn get_balance_and_transactions(&self, topoheight_processed: Arc<Mutex<HashSet<u64>>>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
@@ -724,7 +786,7 @@ impl NetworkHandler {
         // This channel is used to send all the blocks to the processing loop
         // No more than {concurrency} blocks and versions will be prefetch in advance
         // as the task will automatically await on the channel
-        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, GetContractsOutputsResult<'static>)>)>(self.concurrency);
+        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, RPCBlockResponse<'static>, GetContractsOutputsResult<'static>)>(self.concurrency);
         let handle = {
             let api = self.api.clone();
             let address = address.clone();
@@ -747,7 +809,7 @@ impl NetworkHandler {
                         None
                     };
 
-                    let response = if {
+                    if {
                         let mut lock = topoheight_processed.lock().await;
                         lock.insert(topoheight)
                     } {
@@ -770,91 +832,71 @@ impl NetworkHandler {
                             (b, o)
                         };
 
-                        Some((block_result?, outputs_result?))
-                    } else {
+                        data_sender.send((balance, topoheight, block_result?, outputs_result?)).await?;
+                    } else if let Some((next_topo, next_fut)) = next_version_future {
                         // Even if we skip this block, still fetch the next version
-                        if let Some((next_topo, next_fut)) = next_version_future {
-                            topoheight = next_topo;
-                            version = Some(next_fut.await?);
-                        }
-
-                        None
-                    };
-
-                    data_sender.send((balance, topoheight, response)).await?;
+                        topoheight = next_topo;
+                        version = Some(next_fut.await?);
+                    }
                 }
 
                 Ok::<_, Error>(())
             })
         };
 
-        while let Some((mut balance, topoheight, block)) = data_receiver.recv().await {
-            // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
-            // if its not already processed, do it
-            if let Some((block_response, outputs)) = block {
-                debug!("Processing topoheight {}", topoheight);
-                let timestamp = block_response.timestamp;
-                let changes = self.process_block(address, block_response, topoheight, false, true).await?;
+        let highest_nonce_shared = Arc::new(Mutex::new(*highest_nonce));
+        let mut pending_tasks: FuturesUnordered<_> = FuturesUnordered::new();
+        let mut receiver_closed = false;
 
-                // It was requested at the same time of the block processing, so we can handle it now
-                let assets = self.handle_contracts_outputs(outputs.executions, topoheight, timestamp, true).await?;
-                trace!("Contract outputs at topoheight {} affected {} assets", topoheight, assets.len());
-
-                // Check if a change occured, we are the highest version and update balances is requested
-                if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
-                    let mut storage = self.wallet.get_storage().write().await;
-
-                    {
-                        // Set the highest nonce we know
-                        if highest_nonce.is_none() {
-                            // Get the highest nonce from storage
-                            debug!("Highest nonce is not set, fetching it from storage");
-                            *highest_nonce = Some(storage.get_nonce()?);
-                        }
-
-                        // Store only the highest nonce
-                        // Because if we are building queued transactions, it may break our queue
-                        // Our we couldn't submit new txs before they get removed from mempool
-                        if let Some(nonce) = nonce.filter(|n| highest_nonce.as_ref().map(|h| *h < *n).unwrap_or(true)) {
-                            debug!("Storing new highest nonce {}", nonce);
-                            storage.set_nonce(nonce)?;
-                            *highest_nonce = Some(nonce);
-                        }
+        while !receiver_closed || !pending_tasks.is_empty() {
+            select! {
+                // Drive one pending task to completion if any are running
+                Some(result) = pending_tasks.next(), if !pending_tasks.is_empty() => {
+                    result?;
+                    // Only the first processed topoheight should be marked as highest_version
+                    highest_version = false;
+                },
+                // Spawn a new task when we have capacity and data is available
+                maybe_msg = data_receiver.recv(), if !receiver_closed && pending_tasks.len() < self.concurrency => {
+                    if let Some((balance, topoheight, block, outputs)) = maybe_msg {
+                        let task = Box::pin(self.process_balance_update(
+                            address,
+                            asset.clone(),
+                            balance,
+                            topoheight,
+                            block,
+                            outputs,
+                            balances,
+                            highest_version,
+                            Arc::clone(&highest_nonce_shared),
+                        ));
+                        pending_tasks.push(task);
+                    } else {
+                        receiver_closed = true;
                     }
-
-                    // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
-                    let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);
-                    if store {
-                        let plaintext_balance = if let Some(plaintext_balance) = storage.get_unconfirmed_balance_decoded_for(&asset, &balance.compressed()).await? {
-                            plaintext_balance
-                        } else {
-                            trace!("Decrypting balance for asset {}", asset);
-                            let ciphertext = balance.decompressed()?;
-                            let max_supply = storage.get_asset(asset).await?
-                                .get_max_supply();
-
-                            self.wallet.decrypt_ciphertext_with(ciphertext.clone(), max_supply.get_max()).await?
-                                .context(format!("Couldn't decrypt the ciphertext for {} at topoheight {}", asset, topoheight))?
-                        };
-
-                        debug!("Storing balance from topoheight {} for asset {} ({}) {}", topoheight, asset, balance, plaintext_balance);
-                        // Store the new balance
-                        storage.set_balance_for(asset, Balance::new(plaintext_balance, balance, topoheight)).await?;
-
-                        // Propagate the event
-                        self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
-                            asset: asset.clone(),
-                            balance: plaintext_balance
-                        })).await;
+                },
+                // Nothing to do and channel is closed, break out
+                else => {
+                    if receiver_closed {
+                        break;
                     }
                 }
             }
-
-            // Only first iteration is the highest one
-            highest_version = false;
         }
 
+        // Wait for any remaining tasks to complete (receiver already closed here)
+        while let Some(result) = pending_tasks.next().await {
+            result?;
+        }
         handle.await??;
+
+        // Update the mutable reference with the final value
+        if let Some(nonce) = highest_nonce_shared.lock().await.take() {
+            if highest_nonce.is_none_or(|n| nonce > n) {
+                debug!("Updating highest nonce to {}", nonce);
+                *highest_nonce = Some(nonce);
+            }
+        }
 
         Ok(())
     }
