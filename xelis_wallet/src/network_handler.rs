@@ -33,7 +33,6 @@ use xelis_common::{
     time::{TimestampMillis, Instant},
     tokio::{
         select,
-        join,
         spawn_task,
         sync::{mpsc::channel, Mutex, Semaphore},
         task::{JoinError, JoinHandle},
@@ -795,49 +794,33 @@ impl NetworkHandler {
                 let mut version = Some(version);
                 let mut topoheight = topoheight;
                 while let Some(v) = version.take() {
+                    let start = Instant::now();
                     let (balance, _, _, previous_topoheight) = v.consume();
-                    
-                    // Determine the next version to fetch before doing the expensive operations
-                    let next_version_future = if let Some(previous) = previous_topoheight {
-                        if previous > min_topoheight {
-                            trace!("preparing to fetch next version at {}", previous);
-                            Some((previous, api.get_balance_at_topoheight(&address, &asset, previous)))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
 
+                    let next_topoheight = previous_topoheight.filter(|t| *t > min_topoheight);
                     if {
                         let mut lock = topoheight_processed.lock().await;
                         lock.insert(topoheight)
                     } {
                         trace!("fetching block with txs at {}", topoheight);
                         // Fetch block data, outputs, and next version concurrently
-                        let (block_result, outputs_result) = if let Some((next_topo, next_fut)) = next_version_future {
-                            let (b, o, n) = join!(
-                                api.get_block_with_txs_at_topoheight(topoheight),
-                                api.get_contracts_outputs(&address, topoheight),
-                                next_fut
-                            );
+                        let (block_result, outputs_result) = if let Some(next_topo) = next_topoheight {
+                            let (block, outputs, balance) = api.get_block_outputs_and_balance(topoheight, &address, &asset, next_topo).await?;
                             topoheight = next_topo;
-                            version = Some(n?);
-                            (b, o)
+                            version = Some(balance);
+                            (block, outputs)
                         } else {
-                            let (b, o) = join!(
-                                api.get_block_with_txs_at_topoheight(topoheight),
-                                api.get_contracts_outputs(&address, topoheight)
-                            );
-                            (b, o)
+                            api.get_block_and_outputs(topoheight, &address).await?
                         };
 
-                        data_sender.send((balance, topoheight, block_result?, outputs_result?)).await?;
-                    } else if let Some((next_topo, next_fut)) = next_version_future {
+                        data_sender.send((balance, topoheight, block_result, outputs_result)).await?;
+                    } else if let Some(next_topo) = next_topoheight {
                         // Even if we skip this block, still fetch the next version
                         topoheight = next_topo;
-                        version = Some(next_fut.await?);
+                        version = Some(api.get_balance_at_topoheight(&address, &asset, next_topo).await?);
                     }
+
+                    debug!("Fetched balance version at topoheight {} in {:?}", topoheight, start.elapsed());
                 }
 
                 Ok::<_, Error>(())

@@ -18,6 +18,7 @@ use xelis_common::{
         Hash
     },
     rpc::client::{
+        BatchRequest,
         EventReceiver,
         JsonRPCResult,
         WebSocketJsonRPCClient,
@@ -362,5 +363,49 @@ impl DaemonAPI {
             topoheight,
         }).await?;
         Ok(outputs)
+    }
+
+    // Batch request for block and contracts outputs
+    pub async fn get_block_and_outputs(&self, topoheight: u64, address: &Address) -> Result<(BlockResponse, GetContractsOutputsResult<'static>)> {
+        trace!("get_block_and_outputs batch");
+
+        let [block, outputs] = self.client.batch([
+            BatchRequest::new("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
+                topoheight,
+                include_txs: true
+            })?,
+            BatchRequest::new("get_contracts_outputs", &GetContractOutputsParams {
+                address: Cow::Borrowed(address),
+                topoheight,
+            })?,
+        ]).await?;
+        let block: BlockResponse = block.into_result()?;
+        let outputs: GetContractsOutputsResult<'static> = outputs.into_result()?;
+        Ok((block, outputs))
+    }
+
+    // Batch request for block, outputs, and balance at topoheight
+    pub async fn get_block_outputs_and_balance(&self, block_topoheight: u64, address: &Address, asset: &Hash, balance_topoheight: u64) -> Result<(BlockResponse, GetContractsOutputsResult<'static>, VersionedBalance)> {
+        trace!("get_block_outputs_and_balance batch");
+
+        let [block, outputs, balance] = self.client.batch([
+            BatchRequest::new("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
+                topoheight: block_topoheight,
+                include_txs: true
+            })?,
+            BatchRequest::new("get_contracts_outputs", &GetContractOutputsParams {
+                address: Cow::Borrowed(address),
+                topoheight: block_topoheight,
+            })?,
+            BatchRequest::new("get_balance_at_topoheight", &GetBalanceAtTopoHeightParams {
+                topoheight: balance_topoheight,
+                asset: Cow::Borrowed(asset),
+                address: Cow::Borrowed(address)
+            })?,
+        ]).await?;
+        let block: BlockResponse = block.into_result()?;
+        let outputs: GetContractsOutputsResult<'static> = outputs.into_result()?;
+        let balance: VersionedBalance = balance.into_result()?;
+        Ok((block, outputs, balance))
     }
 }
