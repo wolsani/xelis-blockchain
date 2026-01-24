@@ -33,6 +33,7 @@ use xelis_common::{
     time::{TimestampMillis, Instant},
     tokio::{
         select,
+        join,
         spawn_task,
         sync::{mpsc::channel, Mutex, Semaphore},
         task::{JoinError, JoinHandle},
@@ -733,35 +734,54 @@ impl NetworkHandler {
                 let mut topoheight = topoheight;
                 while let Some(v) = version.take() {
                     let (balance, _, _, previous_topoheight) = v.consume();
+                    
+                    // Determine the next version to fetch before doing the expensive operations
+                    let next_version_future = if let Some(previous) = previous_topoheight {
+                        if previous > min_topoheight {
+                            trace!("preparing to fetch next version at {}", previous);
+                            Some((previous, api.get_balance_at_topoheight(&address, &asset, previous)))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     let response = if {
                         let mut lock = topoheight_processed.lock().await;
                         lock.insert(topoheight)
                     } {
                         trace!("fetching block with txs at {}", topoheight);
-                        match api.get_block_with_txs_at_topoheight(topoheight).await {
-                            Ok(block) => {
-                                let outputs = api.get_contracts_outputs(&address, topoheight).await?;
-                                Some((block, outputs))
-                            },
-                            // We are maybe below the pruned topoheight, stop here
-                            Err(e) => {
-                                warn!("Error while fetching block at topoheight {}: {}", topoheight, e);
-                                break;
-                            }
-                        }
+                        // Fetch block data, outputs, and next version concurrently
+                        let (block_result, outputs_result) = if let Some((next_topo, next_fut)) = next_version_future {
+                            let (b, o, n) = join!(
+                                api.get_block_with_txs_at_topoheight(topoheight),
+                                api.get_contracts_outputs(&address, topoheight),
+                                next_fut
+                            );
+                            topoheight = next_topo;
+                            version = Some(n?);
+                            (b, o)
+                        } else {
+                            let (b, o) = join!(
+                                api.get_block_with_txs_at_topoheight(topoheight),
+                                api.get_contracts_outputs(&address, topoheight)
+                            );
+                            (b, o)
+                        };
+
+                        Some((block_result?, outputs_result?))
                     } else {
+                        // Even if we skip this block, still fetch the next version
+                        if let Some((next_topo, next_fut)) = next_version_future {
+                            topoheight = next_topo;
+                            version = Some(next_fut.await?);
+                        }
+
                         None
                     };
-                    data_sender.send((balance, topoheight, response)).await?;
 
-                    if let Some(previous) = previous_topoheight {
-                        // don't sync already synced blocks
-                        if previous > min_topoheight {
-                            trace!("fetch next version at {}", previous);
-                            topoheight = previous;
-                            version = Some(api.get_balance_at_topoheight(&address, &asset, previous).await?);
-                        }
-                    }
+                    data_sender.send((balance, topoheight, response)).await?;
                 }
 
                 Ok::<_, Error>(())
