@@ -157,6 +157,25 @@ async fn read_next_id(
     res
 }
 
+macro_rules! init_test {
+    ($contract:ident, $provider:ident, $chain:ident, $state:ident) => {
+        let $contract = Hash::zero();
+        let $provider = MockStorageProvider::default();
+        let mut $chain = MockChainState::new();
+        $chain.internal_set_contract_module($contract.clone(), ContractModule {
+            module: Arc::new(Module::new()),
+            version: ContractVersion::V0,
+        });
+        let (_, mut $state) = $chain.get_contract_environment_for(
+            Cow::Borrowed(&$contract),
+            None,
+            ContractCaller::Scheduled(Cow::Borrowed(&$contract),
+            Cow::Borrowed(&$contract)),
+            Default::default()
+        ).await.unwrap();
+    };
+}
+
 #[test]
 fn btree_header_matches_full_node_layout() {
     let node = Node::new(1, b"k".to_vec(), ValueCell::from(Primitive::U64(7)), Some(2));
@@ -173,20 +192,7 @@ fn btree_header_matches_full_node_layout() {
 
 #[tokio::test]
 async fn btree_insert_get_delete_roundtrip() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"orders".to_vec() };
 
 
@@ -205,20 +211,7 @@ async fn btree_insert_get_delete_roundtrip() {
 
 #[tokio::test]
 async fn btree_seek_biases_work() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"book".to_vec() };
 
     for (k, v) in &[(10u64, 100u64), (20, 200), (30, 300)] {
@@ -244,20 +237,7 @@ async fn btree_seek_biases_work() {
 
 #[tokio::test]
 async fn btree_cursor_iteration_matches_ordering() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"iter".to_vec() };
 
     for key in [5u64, 15, 25] {
@@ -291,20 +271,7 @@ async fn btree_cursor_iteration_matches_ordering() {
 
 #[tokio::test]
 async fn btree_cursor_scans_random_u64s_in_order() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"rand_cursor_scan".to_vec() };
 
     let mut rng = StdRng::seed_from_u64(0x5EED_5EED);
@@ -368,20 +335,7 @@ async fn btree_cursor_scans_random_u64s_in_order() {
 
 #[tokio::test]
 async fn btree_allows_duplicate_keys_and_ordered_traversal() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"dup_keys".to_vec() };
 
     let key_bytes = 7u64.to_be_bytes().to_vec();
@@ -417,20 +371,7 @@ async fn btree_allows_duplicate_keys_and_ordered_traversal() {
 
 #[tokio::test]
 async fn btree_cursor_scans_duplicate_bucket() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"dup_scan".to_vec() };
 
     let key_bytes = 9u64.to_be_bytes().to_vec();
@@ -486,20 +427,7 @@ async fn btree_cursor_scans_duplicate_bucket() {
 
 #[tokio::test]
 async fn btree_delete_root_with_two_children_promotes_successor() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"delete_root".to_vec() };
 
     for key in [40u64, 20, 60, 50] {
@@ -546,20 +474,7 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
 
 #[tokio::test]
 async fn btree_seek_handles_missing_key_biases() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"seek_biases".to_vec() };
 
     for key in [10u64, 30, 40] {
@@ -601,20 +516,7 @@ async fn btree_seek_equal_strict_bias_uses_ancestors() {
     // For edges:
     //   - key==30, Greater -> None
     //   - key==10, Less    -> None
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"seek_equal".to_vec() };
 
     for (k, v) in [20u64, 10, 30, 25].into_iter().map(|k| (k, k * 10)) {
@@ -675,20 +577,7 @@ async fn btree_seek_equal_strict_bias_uses_ancestors() {
 
 #[tokio::test]
 async fn btree_cursor_key_value_and_exhaustion() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"cursor_access".to_vec() };
 
     for key in [2u64, 4, 6] {
@@ -742,20 +631,7 @@ async fn btree_cursor_key_value_and_exhaustion() {
 
 #[tokio::test]
 async fn btree_cursor_allows_deleting_during_scan() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"scan_delete".to_vec() };
 
     for key in [10u64, 20, 30] {
@@ -811,20 +687,7 @@ async fn btree_cursor_allows_deleting_during_scan() {
 
 #[tokio::test]
 async fn btree_cursor_selective_delete_during_scan() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"scan_delete_subset".to_vec() };
 
     let mut rng = StdRng::seed_from_u64(0xD3_1E7E);
@@ -909,20 +772,7 @@ async fn btree_cursor_selective_delete_during_scan() {
 
 #[tokio::test]
 async fn btree_cursor_descends_and_deletes() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"cursor_descend_delete".to_vec() };
 
     for key in 1u64..=5 {
@@ -992,20 +842,7 @@ async fn btree_cursor_descends_and_deletes() {
 
 #[tokio::test]
 async fn btree_cursor_consecutive_deletes() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"cursor_consecutive_delete".to_vec() };
 
     for key in 1u64..=10 {
@@ -1065,20 +902,7 @@ async fn btree_cursor_consecutive_deletes() {
 
 #[tokio::test]
 async fn btree_cursor_exhausts_tree() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"cursor_exhaust_tree".to_vec() };
 
     for key in 1u64..=5 {
@@ -1160,24 +984,7 @@ async fn collect_values_in_order(
 
 #[tokio::test]
 async fn btree_insert_duplicate_allocates_new_node() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"dup".to_vec() };
 
     let next0 = read_next_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
@@ -1218,20 +1025,7 @@ async fn btree_insert_duplicate_allocates_new_node() {
 
 #[tokio::test]
 async fn btree_delete_variants_cover_storage_cleanup() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"delete_cases".to_vec() };
 
     for key in [20u64, 10, 30, 25, 35, 5, 15, 27] {
@@ -1289,20 +1083,7 @@ async fn btree_delete_variants_cover_storage_cleanup() {
 
 #[tokio::test]
 async fn btree_cursor_cache_refresh_tracks_state() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"cursor_cache".to_vec() };
 
     for key in [10u64, 20, 30] {
@@ -1351,20 +1132,7 @@ async fn btree_cursor_cache_refresh_tracks_state() {
 
 #[tokio::test]
 async fn btree_cursor_detects_stale_value_update() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"stale_read".to_vec() };
 
     // 1. Insert a key
@@ -1428,20 +1196,8 @@ async fn btree_cursor_detects_stale_value_update() {
 
 #[tokio::test]
 async fn btree_cache_prefetch_reads_values() {
-    let contract = Hash::zero();
-    let mut provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
+    let mut provider = provider;
     let namespace = b"prefetch".to_vec();
     let root_key = root_storage_key(&namespace);
 
@@ -1459,20 +1215,7 @@ async fn btree_cache_prefetch_reads_values() {
 
 #[tokio::test]
 async fn btree_seek_empty_and_bounds() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"bounds".to_vec() };
 
     for bias in [
@@ -1513,20 +1256,7 @@ async fn btree_seek_empty_and_bounds() {
 
 #[tokio::test]
 async fn btree_seek_first_last_works() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"seek_first_last".to_vec() };
 
     // Empty tree
@@ -1555,20 +1285,7 @@ async fn btree_seek_first_last_works() {
 
 #[tokio::test]
 async fn btree_namespace_isolation() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store_a = OpaqueBTreeStore { namespace: b"A".to_vec() };
     let store_b = OpaqueBTreeStore { namespace: b"B".to_vec() };
 
@@ -1621,20 +1338,7 @@ async fn btree_key_value_constraints_reject_invalid_inputs() {
 
 #[tokio::test]
 async fn btree_allocate_node_id_monotonic_per_namespace() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let namespace = b"id_alloc".to_vec();
 
     let first = allocate_node_id(&provider, &mut state, &contract, &namespace).await.unwrap();
@@ -1646,20 +1350,7 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
 
 #[tokio::test]
 async fn btree_storage_usage_records_reads() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let namespace = b"usage_read".to_vec();
 
     let mut ctx = TreeContext::new(&provider, &mut state, &contract, &namespace);
@@ -1673,20 +1364,7 @@ async fn btree_storage_usage_records_reads() {
 
 #[tokio::test]
 async fn btree_storage_usage_records_writes() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let namespace = b"usage_write".to_vec();
 
     let mut ctx = TreeContext::new(&provider, &mut state, &contract, &namespace);
@@ -1699,20 +1377,7 @@ async fn btree_storage_usage_records_writes() {
 
 #[tokio::test]
 async fn btree_storage_usage_single_insert_reports_activity() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"insert_usage".to_vec() };
 
     let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
@@ -1725,20 +1390,7 @@ async fn btree_storage_usage_single_insert_reports_activity() {
 
 #[tokio::test]
 async fn btree_storage_usage_delete_reports_activity() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"delete_usage".to_vec() };
 
     insert_key(
@@ -1775,20 +1427,7 @@ async fn read_size(
 
 #[tokio::test]
 async fn btree_len_tracks_insert_and_delete() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"len_tracking".to_vec() };
 
     // Initially empty
@@ -1881,20 +1520,7 @@ async fn btree_assert_treap_invariants(
 async fn btree_treap_invariants_after_random_inserts_and_deletes() {
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"invariants".to_vec() };
 
     // Insert unique random keys (value == key for easy cross-checks).
@@ -1922,20 +1548,7 @@ async fn btree_treap_invariants_after_random_inserts_and_deletes() {
 
 #[tokio::test]
 async fn btree_treap_rotate_left_at_root_updates_links() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"rot_left_root".to_vec() };
 
     // First insert creates root (id = 1)
@@ -1974,20 +1587,7 @@ async fn btree_treap_rotate_left_at_root_updates_links() {
 #[tokio::test]
 async fn btree_treap_rotate_right_under_parent_updates_links() {
     // Force a right rotation on the left child of the root and ensure parent links are updated.
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"rot_right_child".to_vec() };
 
     let k1 = 1_000_000_000u64; // root
@@ -2030,20 +1630,7 @@ async fn btree_treap_rotate_right_under_parent_updates_links() {
 
 #[tokio::test]
 async fn btree_treap_seek_with_duplicates_bias_matrix() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"dup_bias".to_vec() };
 
     // Keys: 6, 7 (x3), 8
@@ -2071,20 +1658,7 @@ async fn btree_treap_seek_with_duplicates_bias_matrix() {
 
 #[tokio::test]
 async fn btree_treap_predecessor_through_duplicate_bucket() {
-    let contract = Hash::zero();
-    let provider = MockStorageProvider::default();
-    let mut chain = MockChainState::new();
-    chain.internal_set_contract_module(contract.clone(), ContractModule {
-        module: Arc::new(Module::new()),
-        version: ContractVersion::V0,
-    });
-    let (_, mut state) = chain.get_contract_environment_for(
-        Cow::Borrowed(&contract),
-        None,
-        ContractCaller::Scheduled(Cow::Borrowed(&contract),
-        Cow::Borrowed(&contract)),
-        Default::default()
-    ).await.unwrap();
+    init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"dup_pred".to_vec() };
 
     insert_key(&provider, &mut state, &contract, &store, 8u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(8))).await.unwrap();
@@ -2092,9 +1666,14 @@ async fn btree_treap_predecessor_through_duplicate_bucket() {
         insert_key(&provider, &mut state, &contract, &store, 9u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(v))).await.unwrap();
     }
 
-    // Get the middle duplicate (value=20)
+    // Get the first duplicate (value=10)
     let first = seek_node(&provider, &mut state, &contract, &store, &9u64.to_be_bytes(), BTreeSeekBias::Exact).await.unwrap().unwrap();
+    assert_eq!(first.value.as_u64().unwrap(), 10);
+
+    // Check value of second duplicate
     let second_id = successor(&provider, &mut state, &contract, &store.namespace, first.id).await.unwrap().unwrap();
+    let second_node = read_node(&provider, &mut state, &contract, &store.namespace, second_id).await.unwrap().unwrap();
+    assert_eq!(second_node.value.as_u64().unwrap(), 20);
 
     // predecessor of middle -> first duplicate
     let pred_mid = predecessor(&provider, &mut state, &contract, &store.namespace, second_id).await.unwrap().unwrap();
