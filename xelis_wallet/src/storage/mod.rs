@@ -10,6 +10,7 @@ use std::{
     num::NonZeroUsize,
 };
 use indexmap::IndexMap;
+use itertools::Either;
 use lru::LruCache;
 use xelis_common::{
     api::{
@@ -1193,9 +1194,12 @@ impl EncryptedStorage {
         // Search the correct range
         let iterator = if self.is_syncing {
             debug!("wallet is syncing, iterating over all transactions");
-            self.transactions_indexes.iter()
+            // Because we are syncing, we have to go through all transactions
+            // and filter them by topoheight later manually
+            // as we're syncing: its going from top to bottom for history
+            Either::Left(self.transactions_indexes.iter().values())
         } else {
-            match (min_topoheight, max_topoheight) {
+            Either::Right(match (min_topoheight, max_topoheight) {
                 (Some(min_topoheight), Some(max_topoheight)) => {
                     let min = self.search_transaction_id_for_topoheight(min_topoheight, None, None, true)
                         .context("Error while searching min id")?;
@@ -1235,11 +1239,11 @@ impl EncryptedStorage {
                     }
                 },
                 (None, None) => self.transactions_indexes.iter()
-            }
+            }.values().rev())
         };
 
         let mut transactions = Vec::new();
-        for el in iterator.values().rev().skip(skip.unwrap_or(0)) {
+        for el in iterator.skip(skip.unwrap_or(0)) {
             let tx_key = el?;
             let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
             trace!("entry: {}", entry.get_hash());
