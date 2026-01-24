@@ -1249,6 +1249,8 @@ impl NetworkHandler {
         let mut daemon_topoheight: u64;
         let mut daemon_block_hash: Hash;
 
+        let broadcast_history_synced = event.is_none();
+
         // Handle the event
         if let Some(block) = event {
             trace!("new block event received");
@@ -1347,7 +1349,6 @@ impl NetworkHandler {
                 }
             }
 
-            self.wallet.propagate_event(Event::HistorySynced { topoheight: wallet_topoheight }).await;
             info!("Sync new blocks completed in {:?}", start.elapsed());
         } else {
             // Update the topoheight and block hash for wallet
@@ -1360,6 +1361,10 @@ impl NetworkHandler {
             storage.set_syncing(false);
             storage.flush().await?;
             debug!("Flushed storage");
+        }
+
+        if broadcast_history_synced {
+            self.wallet.propagate_event(Event::HistorySynced { topoheight: wallet_topoheight }).await;
         }
 
         // Propagate the event
