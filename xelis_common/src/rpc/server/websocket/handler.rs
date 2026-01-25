@@ -142,18 +142,18 @@ where
 
     // Execute the method from the request
     // If the method is "subscribe" or "unsubscribe", subscribe or unsubscribe the session to/from the event
-    async fn execute_method_internal(&self, context: &Context, value: Value) -> Result<Option<Value>, RpcResponseError> {
+    async fn execute_method_internal(&self, session: &WebSocketSessionShared<Self>, context: &Context, value: Value) -> Result<Option<Value>, RpcResponseError> {
         let mut request = self.handler.parse_request(value)?;
         let method = request.method.clone();
         match method.as_str() {
             "subscribe" => {
                 let event = self.parse_event(&mut request)?;
-                self.subscribe_session_to_event(context.get::<WebSocketSessionShared<Self>>().unwrap(), event, request.id.clone()).await?;
+                self.subscribe_session_to_event(session, event, request.id.clone()).await?;
                 Ok(Some(json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(Value::Bool(true))))))
             },
             "unsubscribe" => {
                 let event = self.parse_event(&mut request)?;
-                self.unsubscribe_session_from_event(context.get::<WebSocketSessionShared<Self>>().unwrap(), event, request.id.clone()).await?;
+                self.unsubscribe_session_from_event(session, event, request.id.clone()).await?;
                 Ok(Some(json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(Value::Bool(true))))))
             },
             _ => self.handler.execute_method(context, request).await
@@ -170,12 +170,12 @@ where
         context.store(self.handler.get_data().clone());
 
         match request {
-            e @ Value::Object(_) => self.execute_method_internal(&context, e).await.map(Option::unwrap_or_default),
+            e @ Value::Object(_) => self.execute_method_internal(session, &context, e).await.map(Option::unwrap_or_default),
             Value::Array(requests) => {
                 let mut responses = Vec::new();
                 for value in requests {
                     if value.is_object() {
-                        let response = match self.execute_method_internal(&context, value).await {
+                        let response = match self.execute_method_internal(session, &context, value).await {
                             Ok(response) => response.unwrap_or_default(),
                             Err(e) => e.to_json()
                         };
