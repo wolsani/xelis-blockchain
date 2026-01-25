@@ -136,9 +136,15 @@ where
         }
 
         for perm in app_data.get_permissions() {
-            if !self.handler.has_method(perm) {
+            let trimmed_perm = if perm.starts_with("wallet.") {
+                &perm[7..]
+            } else {
+                perm.as_str()
+            };
+
+            if !self.handler.has_method(trimmed_perm) && (trimmed_perm != "subscribe") && (trimmed_perm != "unsubscribe") {
                 debug!("Permission '{}' is unknown", perm);
-                return Err(XSWDError::UnknownMethodInPermissionsList)
+                return Err(XSWDError::UnknownMethodInPermissionsList(perm.clone()))
             }
         }
 
