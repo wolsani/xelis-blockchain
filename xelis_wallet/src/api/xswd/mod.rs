@@ -178,7 +178,7 @@ where
 
         Ok(json!({
             "jsonrpc": "2.0",
-            "id": Value::Null,
+            "id": state.get_id(),
             "result": {
                 "message": "Application has been registered",
                 "success": true
