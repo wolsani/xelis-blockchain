@@ -1007,6 +1007,9 @@ pub struct RegisteredExecution<'a> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
+    // When a new topoheight is detected
+    // it contains NewTopoHeightEvent as value
+    NewTopoHeight,
     // When a new block is accepted by chain
     // it contains NewBlockEvent as value
     NewBlock,
@@ -1074,6 +1077,12 @@ pub enum NotifyEvent {
     PeerPeerDisconnected,
     // A new block template has been created
     NewBlockTemplate,
+}
+
+// Value of NotifyEvent::NewTopoHeight
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct NewTopoHeightEvent {
+    pub new_topoheight: TopoHeight,
 }
 
 // Value of NotifyEvent::NewBlock
