@@ -290,8 +290,26 @@ pub async fn prefetch_permissions<W: ShareableTid<'static> + XSWDHandler>(contex
 
     let handler: &RPCHandler<W> = context.get()
         .context("XSWD RPC Handler not found in context")?;
-    let app : &AppStateShared = context.get()
+    let app: &AppStateShared = context.get()
         .context("XSWD App State not found in context")?;
+
+    if params.permissions.is_empty() {
+        return Err(InternalRpcError::InvalidParams("No permissions requested"))
+    }
+
+    if params.permissions.len() > 255 {
+        return Err(InternalRpcError::InvalidParams("Too many permissions requested"))
+    }
+
+    {
+        let lock = app.get_permissions().lock().await;
+        for perm in params.permissions.iter() {
+            if !lock.contains_key(perm) {
+                debug!("Permission '{}' is unknown", perm);
+                return Err(InternalRpcError::InvalidParams("Unknown method in permissions list"))
+            }
+        }
+    }
 
     let wallet = handler.get_data();
 
