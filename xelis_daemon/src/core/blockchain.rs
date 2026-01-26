@@ -22,6 +22,7 @@ use xelis_common::{
             ContractTransfersEntryKey,
             ContractEvent,
             MempoolTransactionSummary,
+            NewTopoHeightEvent,
         },
         RPCContractLog,
         RPCTransaction,
@@ -2737,6 +2738,16 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
                 storage.set_top_topoheight(highest_topo).await?;
                 current_topoheight = highest_topo;
+
+                if should_track_events.contains(&NotifyEvent::NewTopoHeight) {
+                    let value = json!(NewTopoHeightEvent {
+                        new_topoheight: highest_topo,
+                    });
+
+                    events.entry(NotifyEvent::NewTopoHeight)
+                        .or_insert_with(Vec::new)
+                        .push(value);
+                }
             }
 
             // If block is directly orphaned
