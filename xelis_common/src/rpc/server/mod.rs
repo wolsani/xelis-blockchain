@@ -6,19 +6,20 @@ use actix_web::{
     Responder,
     HttpRequest
 };
+use xelis_vm::ShareableTid;
 
 use super::{RPCHandler, RpcResponseError};
 use self::websocket::{WebSocketServerShared, WebSocketHandler};
 
 // trait to retrieve easily a JSON RPC handler for registered route
-pub trait RPCServerHandler<T: Send + Clone> {
+pub trait RPCServerHandler<T: ShareableTid<'static>> {
     fn get_rpc_handler(&self) -> &RPCHandler<T>;
 }
 
 // JSON RPC handler endpoint
 pub async fn json_rpc<T, H>(server: Data<H>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
 where
-    T: Send + Sync + Clone + 'static,
+    T: ShareableTid<'static>,
     H: RPCServerHandler<T>
 {
     let result = server.get_rpc_handler().handle_request(&body).await?;

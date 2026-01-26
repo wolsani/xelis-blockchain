@@ -1,5 +1,5 @@
 use std::{borrow::Cow, collections::HashMap};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
@@ -33,6 +33,18 @@ use super::{
     default_true_value,
     daemon
 };
+
+// Optional internal RPC method used by XSWD
+// To request in one time the permissions
+// example: balance, tracked assets etc is grouped into one
+// modal that propose to the user to set them in "always allow"
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+pub struct XSWDPrefetchPermissions {
+    // Description to be shown to the user
+    pub reason: Option<String>,
+    // Request these permissions in advance
+    pub permissions: IndexSet<String>,
+}
 
 // Signer ID to use for signing the transaction
 #[derive(Serialize, Deserialize, JsonSchema)]

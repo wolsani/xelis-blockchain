@@ -9,11 +9,11 @@ use cfg_if::cfg_if;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use metrics::{counter, histogram};
-use log::{ trace, warn};
+use log::trace;
 use schemars::{schema_for, JsonSchema, Schema};
-
+pub use xelis_vm::{Context, ShareableTid, tid};
 use crate::{
-    context::Context,
+    async_handler,
     time::Instant,
     rpc::{
         InternalRpcError,
@@ -29,10 +29,7 @@ use crate::{
 // It is Send and Sync to allow safe sharing across threads except for wasm32 target where Send is not required
 cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
-        pub type Handler = Box<
-            dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + 'a>>
-            + Send + Sync
-        >;
+        pub type Handler = Box<dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + 'a>>>;
 
         pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + 'a>>;
 
@@ -50,14 +47,14 @@ cfg_if! {
 }
 
 // Information about an RPC method
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RpcMethodInfo<'a> {
     pub name: Cow<'a, str>,
     pub schema: Cow<'a, RpcSchema>,
 }
 
 // Schema information about an RPC method
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RpcSchema {
     pub params_schema: Option<Schema>,
     pub returns_schema: Schema,
@@ -69,40 +66,50 @@ pub struct MethodHandler {
     pub schema: RpcSchema
 }
 
-pub struct RPCHandler<T: Send + Clone + 'static> {
+pub struct RPCHandler<T: ShareableTid<'static>> {
     // all RPC methods registered
-    methods: HashMap<String, MethodHandler>,
+    methods: HashMap<Cow<'static, str>, MethodHandler>,
     data: T,
     batch_limit: Option<usize>
 }
 
+tid! { impl<'a, T: 'static> TidAble<'a> for RPCHandler<T> where T: ShareableTid<'static> }
+
 impl<T> RPCHandler<T>
 where
-    T: Send + Sync + Clone + 'static
+    T: ShareableTid<'static>
 {
+    // Create a new RPC handler with optional batch limit
     pub fn new(data: T, batch_limit: impl Into<Option<usize>>) -> Self {
-        Self {
+        let mut handler = Self {
             methods: HashMap::new(),
             data,
             batch_limit: batch_limit.into()
-        }
+        };
+
+        // Internally register the "schema" method to get all registered methods
+        handler.register_method_no_params_custom_return::<Vec<RpcMethodInfo>>("schema", async_handler!(schema::<T>, single));
+
+        handler
     }
 
+    // Handle an RPC request from raw bytes
     pub async fn handle_request(&self, body: &[u8]) -> Result<Value, RpcResponseError> {
         let mut context = Context::new();
 
         // Add the data
-        context.store(self.get_data().clone());
+        context.insert_ref(&self);
 
         self.handle_request_with_context(context, body).await
     }
 
-    pub async fn handle_request_with_context(&self, context: Context, body: &[u8]) -> Result<Value, RpcResponseError> {
+    // Handle an RPC request from raw bytes with a given context
+    pub async fn handle_request_with_context<'ty, 'r>(&self, context: Context<'ty, 'r>, body: &[u8]) -> Result<Value, RpcResponseError> {
         let request: Value = serde_json::from_slice(body)
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
 
         match request {
-            e @ Value::Object(_) => self.execute_method(&context, self.parse_request(e)?).await
+            e @ Value::Object(_) => self.execute_method(&context, parse_request(e)?).await
                 .map(|e| e.unwrap_or(Value::Null)),
             Value::Array(requests) => {
                 if self.batch_limit.is_some_and(|v| requests.len() > v) {
@@ -112,7 +119,7 @@ where
                 let mut responses = Vec::with_capacity(requests.len());
                 for value in requests {
                     if value.is_object() {
-                        let request = self.parse_request(value)?;
+                        let request = parse_request(value)?;
                         let response = match self.execute_method(&context, request).await {
                             Ok(response) => response.unwrap_or_default(),
                             Err(e) => e.to_json()
@@ -129,48 +136,16 @@ where
         }
     }
 
-    pub fn parse_request_from_bytes(&self, body: &[u8]) -> Result<RpcRequest, RpcResponseError> {
-        let request: Value = serde_json::from_slice(body)
-            .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
-        self.parse_request(request)
-    }
-
-    pub fn parse_request(&self, body: Value) -> Result<RpcRequest, RpcResponseError> {
-        let request: RpcRequest = serde_json::from_value(body).map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
-        if request.jsonrpc != JSON_RPC_VERSION {
-            return Err(RpcResponseError::new(request.id, InternalRpcError::InvalidVersion));
-        }
-        Ok(request)
-    }
-
     pub fn has_method(&self, method_name: &str) -> bool {
         self.methods.contains_key(method_name)
     }
 
-    pub async fn execute_method<'a>(&'a self, context: &'a Context, mut request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
-        let handler = match self.methods.get(&request.method) {
-            Some(handler) => handler,
-            None => {
-                if request.method == "schema" {
-                    // Show all the methods registered
-                    let methods: Vec<RpcMethodInfo> = self.methods.iter().map(|(name, handler)| {
-                        RpcMethodInfo {
-                            name: Cow::Borrowed(name),
-                            schema: Cow::Borrowed(&handler.schema)
-                        }
-                    }).collect();
-
-                    return Ok(Some(json!({
-                        "jsonrpc": JSON_RPC_VERSION,
-                        "id": request.id,
-                        "result": methods
-                    })));
-                }
-
-                trace!("unknown RPC method '{}'", request.method);
-                return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
-            }
-        };
+    // Execute an RPC method from a request
+    // it will dispatch to the correct handler based on the method name
+    pub async fn execute_method<'a, 'ty, 'r>(&'a self, context: &'a Context<'ty, 'r>, mut request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
+        let key = Cow::Borrowed(request.method.as_str());
+        let handler = self.methods.get(&key)
+            .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::MethodNotFound(request.method.clone())))?;
 
         trace!("executing '{}' RPC method", request.method);
         counter!("xelis_rpc_calls", "method" => request.method.clone()).increment(1);
@@ -195,24 +170,23 @@ where
     }
 
     // register a new RPC method handler
-    pub fn register_method(&mut self, name: &str, handler: MethodHandler) {
+    pub fn register_method(&mut self, name: impl Into<Cow<'static, str>>, handler: MethodHandler) {
+        let name = name.into();
         trace!("Registering RPC method: {}", name);
-        if self.methods.insert(name.into(), handler).is_some() {
-            warn!("The method '{}' was already registered !", name);
-        }
+        let v = self.methods.insert(name.clone(), handler);
+        assert!(v.is_none(), "RPC method '{}' is already registered", name);
     }
 
     // Register a method with parameters
     pub fn register_method_with_params<P, R>(
         &mut self,
-        name: &str,
+        name: impl Into<Cow<'static, str>>,
         f: HandlerParams<P, R>,
     )
     where
         P: JsonSchema + DeserializeOwned + Send + 'static,
         R: JsonSchema + Serialize + Send + 'static,
     {
-        trace!("Registering RPC method with params: {}", name);
         let f = Arc::new(f);
 
         let handler: Handler = Box::new(move |ctx, body| {
@@ -236,14 +210,13 @@ where
     // Register a method with parameters with a return schema given
     pub fn register_method_with_params_and_return_schema<P, R>(
         &mut self,
-        name: &str,
+        name: impl Into<Cow<'static, str>>,
         f: HandlerParams<P, Value>,
     )
     where
         P: JsonSchema + DeserializeOwned + Send + 'static,
         R: JsonSchema + Serialize + Send + 'static,
     {
-        trace!("Registering RPC method with params: {}", name);
         let f = Arc::new(f);
 
         let handler: Handler = Box::new(move |ctx, body| {
@@ -266,13 +239,12 @@ where
     // Register a method with no parameters
     pub fn register_method_no_params<R>(
         &mut self,
-        name: &str,
+        name: impl Into<Cow<'static, str>>,
         f: HandlerNoParams<R>
     )
     where
         R: JsonSchema + Serialize + Send + 'static
     {
-        trace!("Registering RPC method with no params: {}", name);
         let f = Arc::new(f);
 
         let handler: Handler = Box::new(move |ctx, body| {
@@ -293,17 +265,15 @@ where
         });
     }
 
-
     // Register a method with no parameters
     pub fn register_method_no_params_custom_return<R>(
         &mut self,
-        name: &str,
+        name: impl Into<Cow<'static, str>>,
         f: HandlerNoParams<Value>
     )
     where
         R: JsonSchema + Serialize + Send + 'static
     {
-        trace!("Registering RPC method with no params: {}", name);
         let f = Arc::new(f);
 
         let handler: Handler = Box::new(move |ctx, body| {
@@ -323,17 +293,57 @@ where
         });
     }
 
+    // Get a reference to the data associated with the RPC handler
+    #[inline]
     pub fn get_data(&self) -> &T {
         &self.data
     }
 }
 
+// Built-in "schema" method to get all registered methods and their schemas
+async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> Result<Value, InternalRpcError> {
+    let rpc_handler: &RPCHandler<T> = context.get()
+        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
+
+    let methods = rpc_handler.methods.iter()
+        .map(|(name, handler)| RpcMethodInfo {
+            name: Cow::Borrowed(name),
+            schema: Cow::Borrowed(&handler.schema)
+        }).collect::<Vec<_>>();
+
+    Ok(json!(methods))
+}
+
+// Parse an RPC request from raw bytes
+pub fn parse_request_from_bytes(body: &[u8]) -> Result<RpcRequest, RpcResponseError> {
+    let request: RpcRequest = serde_json::from_slice(body)
+        .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
+
+    if request.jsonrpc != JSON_RPC_VERSION {
+        return Err(RpcResponseError::new(request.id, InternalRpcError::InvalidVersion));
+    }
+
+    Ok(request)
+}
+
+// Parse an RPC request from a JSON value
+pub fn parse_request(body: Value) -> Result<RpcRequest, RpcResponseError> {
+    let request: RpcRequest = serde_json::from_value(body).map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
+    if request.jsonrpc != JSON_RPC_VERSION {
+        return Err(RpcResponseError::new(request.id, InternalRpcError::InvalidVersion));
+    }
+    Ok(request)
+}
+
+// Parse parameters from a JSON value
+// If the value is null, it is replaced with an empty object
 pub fn parse_params<P: DeserializeOwned>(mut value: Value) -> Result<P, InternalRpcError> {
     if value.is_null() {
         value = Value::Object(Map::new());
     }
 
-    serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidJSONParams(e))
+    serde_json::from_value(value)
+        .map_err(|e| InternalRpcError::InvalidJSONParams(e))
 }
 
 // RPC Method with no params required

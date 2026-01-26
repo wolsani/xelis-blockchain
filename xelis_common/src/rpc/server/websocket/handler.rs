@@ -8,10 +8,10 @@ use futures::{stream, StreamExt};
 use log::{trace, debug};
 use serde_json::{Value, json};
 use serde::{de::DeserializeOwned, Serialize};
+use xelis_vm::{Context, ShareableTid};
 use crate::{
     tokio::sync::RwLock,
     api::{EventResult, SubscribeParams},
-    context::Context,
     rpc::{
         RpcResponseError,
         InternalRpcError,
@@ -19,12 +19,13 @@ use crate::{
         RPCHandler,
         RpcRequest,
         RpcResponse,
+        parse_request
     }
 };
 use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
-pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static> {
+pub struct EventWebSocketHandler<T: ShareableTid<'static>, E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static> {
     // a map of sessions to events
     events: RwLock<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<Id>>>>,
     // the RPC handler containing the methods to call
@@ -36,7 +37,7 @@ pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize 
 
 impl<T, E> EventWebSocketHandler<T, E>
 where
-    T: Sync + Send + Clone + 'static,
+    T: ShareableTid<'static>,
     E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static
 {
     // Creates a new event websocket handler
@@ -142,8 +143,8 @@ where
 
     // Execute the method from the request
     // If the method is "subscribe" or "unsubscribe", subscribe or unsubscribe the session to/from the event
-    async fn execute_method_internal(&self, session: &WebSocketSessionShared<Self>, context: &Context, value: Value) -> Result<Option<Value>, RpcResponseError> {
-        let mut request = self.handler.parse_request(value)?;
+    async fn execute_method_internal<'ty, 'r>(&self, session: &WebSocketSessionShared<Self>, context: &Context<'ty, 'r>, value: Value) -> Result<Option<Value>, RpcResponseError> {
+        let mut request = parse_request(value)?;
         let method = request.method.clone();
         match method.as_str() {
             "subscribe" => {
@@ -166,8 +167,8 @@ where
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
 
         let mut context = Context::default();
-        context.store(session.clone());
-        context.store(self.handler.get_data().clone());
+        context.insert(session);
+        context.insert(self.handler.get_data());
 
         match request {
             e @ Value::Object(_) => self.execute_method_internal(session, &context, e).await.map(Option::unwrap_or_default),
@@ -198,7 +199,7 @@ where
 #[async_trait]
 impl<T, E> WebSocketHandler for EventWebSocketHandler<T, E>
 where
-    T: Sync + Send + Clone + 'static,
+    T: ShareableTid<'static>,
     E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
