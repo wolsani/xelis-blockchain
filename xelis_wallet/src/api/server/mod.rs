@@ -1,29 +1,26 @@
 mod rpc_server;
 mod xswd_server;
 
+use serde::Serialize;
+use serde_json::json;
+use xelis_common::{
+    api::wallet::NotifyEvent,
+    rpc::{ShareableTid, server::WebSocketServerHandler}
+};
+use crate::api::XSWDHandler;
+pub use xswd_server::{
+    XSWDServer,
+    XSWDWebSocketHandler
+};
 pub use rpc_server::{
     WalletRpcServer,
     WalletRpcServerShared,
     AuthConfig
 };
 
-use serde::Serialize;
-use serde_json::json;
-use xelis_common::{
-    api::wallet::NotifyEvent,
-    rpc::server::WebSocketServerHandler
-};
-pub use xswd_server::{
-    XSWDServer,
-    XSWDWebSocketHandler
-};
-
-use crate::api::XSWDHandler;
-
-
 pub enum APIServer<W>
 where
-    W: Clone + Send + Sync + XSWDHandler + 'static
+    W: ShareableTid<'static> + XSWDHandler
 {
     RPCServer(WalletRpcServerShared<W>),
     XSWD(XSWDServer<W>)
@@ -31,7 +28,7 @@ where
 
 impl<W> APIServer<W>
 where
-    W: Clone + Send + Sync + XSWDHandler + 'static
+    W: ShareableTid<'static> + XSWDHandler
 {
     pub async fn notify_event<V: Serialize>(&self, event: &NotifyEvent, value: &V) {
         let json = json!(value);

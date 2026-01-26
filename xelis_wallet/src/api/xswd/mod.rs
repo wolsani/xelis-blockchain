@@ -2,9 +2,7 @@ mod error;
 mod types;
 mod relayer;
 
-use std::borrow::Cow;
-
-use anyhow::Error;
+use anyhow::{Context as _, Error};
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use serde_json::{
@@ -12,16 +10,10 @@ use serde_json::{
     json
 };
 use xelis_common::{
-    api::wallet::NotifyEvent,
-    context::Context,
+    async_handler,
     crypto::elgamal::PublicKey as DecompressedPublicKey,
-    rpc::{
-        InternalRpcError,
-        RPCHandler,
-        RpcRequest,
-        RpcResponse,
-        RpcResponseError
-    },
+    rpc::*,
+    api::wallet::XSWDPrefetchPermissions,
     tokio::sync::Semaphore
 };
 use log::{debug, info};
@@ -40,7 +32,8 @@ pub use relayer::{XSWDRelayer, XSWDRelayerShared};
 // to ensure he is validating each action.
 pub struct XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDHandler + 'static {
+    W: ShareableTid<'static> + XSWDHandler
+{
     handler: RPCHandler<W>,
     // This is used to limit to one at a time a permission request
     semaphore: Semaphore
@@ -67,7 +60,7 @@ pub trait XSWDHandler {
 
     // On grouped permissions request
     // This is optional and can be ignored by default
-    async fn on_prefetch_permissions_request(&self, _: &AppStateShared, _: InternalPrefetchPermissions) -> Result<IndexMap<String, Permission>, Error> {
+    async fn on_prefetch_permissions_request(&self, _: &AppStateShared, _: XSWDPrefetchPermissions) -> Result<IndexMap<String, Permission>, Error> {
         Ok(IndexMap::new())
     }
 }
@@ -78,26 +71,23 @@ pub trait XSWDProvider {
     async fn has_app_with_id(&self, id: &str) -> bool;
 }
 
-pub enum OnRequestResult {
-    Return(Option<Value>),
-    Request {
-        request: RpcRequest,
-        event: NotifyEvent,
-        is_subscribe: bool,
-    }
-}
-
 impl<W> XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDHandler + 'static
+    W: ShareableTid<'static> + XSWDHandler
 {
-    pub fn new(handler: RPCHandler<W>) -> Self {
+    /// Create a new XSWD instance with the given RPC handler
+    pub fn new(mut handler: RPCHandler<W>) -> Self {
+        // Register internal methods
+        handler.register_method_with_params("xswd.prefetch_permissions", async_handler!(prefetch_permissions::<W>));
+
         Self {
             handler,
             semaphore: Semaphore::new(1)
         }
     }
 
+    /// Get the RPC handler
+    #[inline(always)]
     pub fn handler(&self) -> &RPCHandler<W> {
         &self.handler
     }
@@ -142,7 +132,7 @@ where
                 perm.as_str()
             };
 
-            if !self.handler.has_method(trimmed_perm) && (trimmed_perm != "subscribe") && (trimmed_perm != "unsubscribe") {
+            if !self.handler.has_method(trimmed_perm) {
                 debug!("Permission '{}' is unknown", perm);
                 return Err(XSWDError::UnknownMethodInPermissionsList(perm.clone()))
             }
@@ -186,90 +176,36 @@ where
         }))
     }
 
-    async fn on_internal_request(&self, app: &AppStateShared, mut request: RpcRequest) -> Result<OnRequestResult, RpcResponseError> {
-        let _permit = self.semaphore.acquire().await
-            .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
-
-        match request.method.as_str() {
-            "prefetch_permissions" => {
-                let wallet = self.handler.get_data();
-                let params = request.params
-                    .ok_or_else(|| RpcResponseError::new(request.id.take(), InternalRpcError::ExpectedParams))?;
-                let params: InternalPrefetchPermissions = serde_json::from_value(params)
-                    .map_err(|e| RpcResponseError::new(request.id.take(), InternalRpcError::InvalidJSONParams(e)))?;
-
-                if params.permissions.is_empty() {
-                    return Err(RpcResponseError::new(request.id.take() , InternalRpcError::InvalidParams("Permissions list cannot be empty".into())))
-                }
-
-                app.set_requesting(true);
-                let res = wallet.on_prefetch_permissions_request(app, params).await
-                    .map_err(|e| RpcResponseError::new(request.id.take(), e))?;
-
-                if !res.is_empty() {
-                    let mut permissions = app.get_permissions().lock().await;
-                    for (method, perm) in res {
-                        permissions.insert(method, perm);
-                    }
-                }
-                app.set_requesting(false);
-
-                Ok(OnRequestResult::Return(if request.id.is_some() {
-                    Some(json!(RpcResponse::new(Cow::Owned(request.id), Cow::Owned(Value::Bool(true)))))
-                } else {
-                    None
-                }))
-            },
-            _ => Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
-        }
-    }
-
-    pub async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<OnRequestResult, RpcResponseError>
+    pub async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<Option<Value>, RpcResponseError>
     where
         P: XSWDProvider
     {
-        let mut request = self.handler.parse_request_from_bytes(message)?;
+        let mut request = parse_request_from_bytes(message)?;
         // Redirect all node methods to the node method handler
         if request.method.starts_with("node.") {
             // Remove the 5 first chars (node.)
             request.method = request.method[5..].into();
-            return self.handler.get_data().call_node_with(request).await.map(|v| OnRequestResult::Return(Some(v)))
-        }
-
-        if request.method.starts_with("xswd.") {
-            request.method = request.method[5..].into();
-            return self.on_internal_request(app, request).await
+            return self.handler.get_data().call_node_with(request).await.map(Some)
         }
 
         // Verify that the method start with "wallet."
-        if !request.method.starts_with("wallet.") {
-            return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+        if request.method.starts_with("wallet.") {
+            request.method = request.method[7..].into();
         }
-        request.method = request.method[7..].into();
 
-        // Verify first if the method exist (and that its not a built-in one)
-        let is_subscribe = request.method == "subscribe";
-        let is_unsubscribe = request.method == "unsubscribe";
-        if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
+        if !self.handler.has_method(&request.method) {
             return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
         }
 
         // let's check the permission set by user for this method
-        app.set_requesting(true);
-        self.verify_permission_for_request(provider, &app, &request).await?;
-        app.set_requesting(false);
-
-        if !is_subscribe && !is_unsubscribe {
-            return self.execute_method(app.id(), request).await.map(OnRequestResult::Return)
+        // Special case: internal xswd methods are always allowed
+        if !request.method.starts_with("xswd.") {
+            app.set_requesting(true);
+            self.verify_permission_for_request(provider, &app, &request).await?;
+            app.set_requesting(false);
         }
 
-        let event = serde_json::from_value(
-            request.params.take()
-                .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?)
-            .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e))
-        )?;
-
-        Ok(OnRequestResult::Request { event, request, is_subscribe })
+        self.execute_method(app.id(), request).await
     }
 
     pub async fn on_close(&self, app: AppStateShared) -> Result<(), Error> {
@@ -282,12 +218,13 @@ where
         self.handler.get_data().on_app_disconnect(app).await
     }
 
-    pub async fn execute_method(&self, id: XSWDAppId, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
+    pub async fn execute_method(&self, id: &XSWDAppId, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
         // Call the method
         let mut context = Context::default();
-        context.store(self.handler.get_data().clone());
+        context.insert_ref(&self.handler);
         // Store the app id
-        context.store(id);
+        context.insert_ref(id);
+
         self.handler.execute_method(&context, request).await
     }
 
@@ -342,4 +279,32 @@ where
             }
         }
     }
+}
+
+/// Internal RPC method used by XSWD
+/// To request in one time the permissions
+pub async fn prefetch_permissions<W: ShareableTid<'static> + XSWDHandler>(context: &Context<'_, '_>, params: XSWDPrefetchPermissions) -> Result<bool, InternalRpcError> {
+    if params.permissions.is_empty() {
+        return Err(InternalRpcError::InvalidParams("Permissions list cannot be empty"))
+    }
+
+    let handler: &RPCHandler<W> = context.get()
+        .context("XSWD RPC Handler not found in context")?;
+    let app : &AppStateShared = context.get()
+        .context("XSWD App State not found in context")?;
+
+    let wallet = handler.get_data();
+
+    app.set_requesting(true);
+    let res = wallet.on_prefetch_permissions_request(app, params).await?;
+
+    if !res.is_empty() {
+        let mut permissions = app.get_permissions().lock().await;
+        for (method, perm) in res {
+            permissions.insert(method, perm);
+        }
+    }
+    app.set_requesting(false);
+
+    Ok(true)
 }

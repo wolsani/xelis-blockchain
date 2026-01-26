@@ -5,12 +5,14 @@ use tokio_tungstenite_wasm::{
     Message,
     connect,
 };
-use xelis_common::tokio::{
-    select,
-    spawn_task,
-    sync::mpsc
+use xelis_common::{
+    rpc::ShareableTid,
+    tokio::{
+        select,
+        spawn_task,
+        sync::mpsc
+    }
 };
-
 use crate::api::{
     xswd::relayer::{
         cipher::Cipher,
@@ -34,7 +36,7 @@ pub struct Client {
 impl Client {
     pub async fn new<W>(target: String, relayer: XSWDRelayerShared<W>, encryption_mode: Option<EncryptionMode>, state: AppStateShared) -> Result<Self, anyhow::Error>
     where
-        W: Clone + Send + Sync + XSWDHandler + 'static
+        W: ShareableTid<'static> + XSWDHandler
     {
         // Create a cipher based on the provided encryption mode
         let cipher = Cipher::new(encryption_mode)?;
@@ -79,7 +81,7 @@ impl Client {
         mut cipher: Cipher
     ) -> Result<(), anyhow::Error>
     where
-        W: Clone + Send + Sync + XSWDHandler + 'static
+        W: ShareableTid<'static> + XSWDHandler
     {
         loop {
             select! {

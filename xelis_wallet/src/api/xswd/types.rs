@@ -8,11 +8,17 @@ use std::{
         Arc
     }
 };
-use xelis_common::{rpc::RpcRequest, serializer::*, tokio::sync::Mutex};
+use xelis_common::{
+    rpc::{RpcRequest, tid},
+    serializer::*,
+    tokio::sync::Mutex
+};
 
 // Used for context only
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct XSWDAppId(pub Arc<String>);
+
+tid!(XSWDAppId);
 
 // Application state shared between all threads
 // Built from the application data
@@ -30,6 +36,8 @@ pub struct AppState {
     // Do we have a pending request?
     is_requesting: AtomicBool
 }
+
+tid!(AppState);
 
 impl Hash for AppState {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -70,34 +78,42 @@ impl AppState {
         }
     }
 
-    pub fn id(&self) -> XSWDAppId {
-        self.id.clone()
+    #[inline(always)]
+    pub fn id(&self) -> &XSWDAppId {
+        &self.id
     }
 
+    #[inline(always)]
     pub fn get_id(&self) -> &str {
         &self.id.0
     }
 
+    #[inline(always)]
     pub fn get_name(&self) -> &String {
         &self.name
     }
 
+    #[inline(always)]
     pub fn get_description(&self) -> &String {
         &self.description
     }
 
+    #[inline(always)]
     pub fn get_url(&self) -> &Option<String> {
         &self.url
     }
 
+    #[inline(always)]
     pub fn get_permissions(&self) -> &Mutex<IndexMap<String, Permission>> {
         &self.permissions
     }
 
+    #[inline(always)]
     pub fn is_requesting(&self) -> bool {
         self.is_requesting.load(Ordering::SeqCst)
     }
 
+    #[inline(always)]
     pub fn set_requesting(&self, value: bool) {
         self.is_requesting.store(value, Ordering::SeqCst);
     }
@@ -263,18 +279,6 @@ impl fmt::Display for Permission {
             Self::Ask => write!(f, "ask"),
         }
     }
-}
-
-// Optional internal RPC method used by XSWD
-// To request in one time the permissions
-// example: balance, tracked assets etc is grouped into one
-// modal that propose to the user to set them in "always allow"
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InternalPrefetchPermissions {
-    // Description to be shown to the user
-    pub reason: Option<String>,
-    // Request these permissions in advance
-    pub permissions: IndexSet<String>,
 }
 
 pub enum PermissionRequest<'a> {

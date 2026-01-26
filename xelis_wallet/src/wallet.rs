@@ -23,12 +23,7 @@ use chrono::TimeZone;
 use serde::Serialize;
 use xelis_common::{
     api::{
-        wallet::{
-            BalanceChanged,
-            NotifyEvent,
-            TransactionEntry,
-            BaseFeeMode
-        },
+        wallet::*,
         DataElement
     },
     asset::RPCAssetData,
@@ -121,7 +116,6 @@ use {
         PermissionResult,
         PermissionRequest,
         XSWDHandler,
-        InternalPrefetchPermissions,
         Permission,
     },
     xelis_common::{
@@ -218,6 +212,9 @@ impl Event {
     }
 }
 
+// Wallet structure
+// It holds the encrypted storage and the account keys
+// It also holds the network handler to keep the wallet synced in online mode
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: RwLock<EncryptedStorage>,
@@ -1463,7 +1460,7 @@ pub enum XSWDEvent {
     RequestApplication(AppStateShared, oneshot::Sender<Result<PermissionResult, Error>>),
     CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>),
     AppDisconnect(AppStateShared),
-    PrefetchPermissions(AppStateShared, InternalPrefetchPermissions, oneshot::Sender<Result<IndexMap<String, Permission>, Error>>),
+    PrefetchPermissions(AppStateShared, XSWDPrefetchPermissions, oneshot::Sender<Result<IndexMap<String, Permission>, Error>>),
 }
 
 #[cfg(feature = "xswd")]
@@ -1541,7 +1538,7 @@ impl XSWDHandler for Arc<Wallet> {
     }
 
     // On CLI, this will show all permissions and accept them always at once if approved
-    async fn on_prefetch_permissions_request(&self, app: &AppStateShared, permissions: InternalPrefetchPermissions) -> Result<IndexMap<String, Permission>, Error> {
+    async fn on_prefetch_permissions_request(&self, app: &AppStateShared, permissions: XSWDPrefetchPermissions) -> Result<IndexMap<String, Permission>, Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             let (callback, receiver) = oneshot::channel();
             sender.send(XSWDEvent::PrefetchPermissions(app.clone(), permissions, callback))?;
