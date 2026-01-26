@@ -75,6 +75,23 @@ When a new block has been accepted and included in the chain by the daemon.
 }
 ```
 
+#### New TopoHeight
+
+When a new topoheight has been detected by the daemon.
+
+##### Name `new_topo_height`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "new_topoheight": 107219
+    }
+}
+```
+
 #### Block Ordered
 
 When a block has been ordered and executed by the DAG order.
