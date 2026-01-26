@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use xelis_vm::{
     impl_opaque,
     traits::{DynEq, DynHash, Serializable},
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -63,7 +63,7 @@ impl Serializable for RangeProofWrapper {
     }
 }
 
-pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {    
+pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {    
     let proof_size = params[2].as_ref()
         .as_u8()?;
 
@@ -96,7 +96,7 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
 }
 
-pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     // SAFETY: no other reference is made to it
     let commitments = unsafe {
         params[0]

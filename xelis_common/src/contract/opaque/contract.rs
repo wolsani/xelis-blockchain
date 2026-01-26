@@ -3,7 +3,7 @@ use std::{collections::{VecDeque, hash_map::Entry}, hash, sync::Arc};
 use indexmap::IndexMap;
 use log::debug;
 use xelis_vm::{
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -55,7 +55,7 @@ impl Serializable for OpaqueContract {}
 
 impl JSONHelper for OpaqueContract {}
 
-pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -94,7 +94,7 @@ pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     Ok(SysCallResult::Return(opaque.into()))
 }
 
-pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 
@@ -179,7 +179,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
     })
 }
 
-pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
     let p = params.remove(1)
@@ -211,7 +211,7 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
     })
 }
 
-pub fn contract_get_hash<'a>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context<'_, '_>) -> FnReturnType<ContractMetadata> {
+pub fn contract_get_hash<'a>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext<'_, '_>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 

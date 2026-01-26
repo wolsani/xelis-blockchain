@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use xelis_vm::{
     impl_opaque,
     traits::{DynEq, DynHash, Serializable},
-    Context,
+    VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -62,7 +62,7 @@ impl Serializable for BalanceProof {
 }
 
 
-pub fn balance_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn balance_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let amount = params[0]
         .as_u64()
         .context("Failed to get amount parameter")?;
@@ -76,14 +76,14 @@ pub fn balance_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>
     Ok(SysCallResult::Return(Primitive::Opaque(proof.into()).into()))
 }
 
-pub fn balance_proof_amount(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn balance_proof_amount(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &BalanceProof = zelf.as_opaque_type()?;
 
     Ok(SysCallResult::Return(Primitive::U64(zelf.amount()).into()))
 }
 
-pub fn balance_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn balance_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &BalanceProof = zelf.as_opaque_type()?;
     let commitment_eq_proof = zelf.commitment_eq_proof();
@@ -91,7 +91,7 @@ pub fn balance_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &Modu
     Ok(SysCallResult::Return(Primitive::Opaque(commitment_eq_proof.clone().into()).into()))
 }
 
-pub fn balance_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn balance_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let source_pubkey = PublicKey::from_point(
         params[0]
             .as_mut()

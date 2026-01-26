@@ -3,7 +3,7 @@ use std::hash::Hasher;
 use xelis_vm::{
     impl_opaque,
     traits::{DynEq, DynHash, Serializable},
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -61,7 +61,7 @@ impl Serializable for CommitmentEqProof {
     }
 }
 
-pub fn commitment_eq_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn commitment_eq_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let source_pubkey = PublicKey::from_point(
         params[0]
             .as_mut()

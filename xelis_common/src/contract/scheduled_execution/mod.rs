@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -149,7 +149,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     _: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
@@ -291,7 +291,7 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let topoheight = params[4].as_u64()?;
     schedule_execution::<P>(ScheduledExecutionKind::TopoHeight(topoheight), instance, params, metadata, context).await
@@ -301,12 +301,12 @@ pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvid
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     schedule_execution::<P>(ScheduledExecutionKind::BlockEnd, instance, params, metadata, context).await
 }
 
-pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
         .as_ref()
@@ -315,7 +315,7 @@ pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &M
     Ok(SysCallResult::Return(scheduled_execution.hash.clone().into()))
 }
 
-pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
         .as_ref()
@@ -331,7 +331,7 @@ pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
     instance: FnInstance<'a>,
     _: FnParams,
     _: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
@@ -349,7 +349,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
     _: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
@@ -379,7 +379,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let amount = params[0].as_u64()?;
     let use_contract_balance = params[1].as_bool()?;

@@ -29,7 +29,7 @@ use indexmap::{IndexMap, IndexSet};
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -2209,7 +2209,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
 }
 
 #[inline]
-pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<&'a P, anyhow::Error> {
+pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut VMContext<'ty, 'r>) -> Result<&'a P, anyhow::Error> {
     let data: &mut ContractProviderWrapper<P> = context.get_mut()
         .context("Provider not initialized")?;
 
@@ -2217,12 +2217,12 @@ pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut 
 }
 
 #[inline]
-pub fn state_from_context<'a, 'ty, 'r>(context: &'a mut Context<'ty, 'r>) -> Result<&'a mut ChainState<'ty>, anyhow::Error> {
+pub fn state_from_context<'a, 'ty, 'r>(context: &'a mut VMContext<'ty, 'r>) -> Result<&'a mut ChainState<'ty>, anyhow::Error> {
     context.get_mut::<ChainState>()
         .context("Chain state not initialized")
 }
 
-pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<(&'a P, &'a mut ChainState<'ty>), anyhow::Error> {
+pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut VMContext<'ty, 'r>) -> Result<(&'a P, &'a mut ChainState<'ty>), anyhow::Error> {
     let mut datas = context.get_many_mut([&ContractProviderWrapper::<P>::id(), &TypeId::of::<ChainState>()]);
 
     let wrapper: &mut ContractProviderWrapper<P> = datas[0]
@@ -2417,7 +2417,7 @@ pub async fn record_account_balance_credit<'a, 'b>(
 
 // Take from the available gas fee and increase the state gas fee allowance
 // this will be reduced from the final used gas to prevent double charging
-pub fn record_gas_allowance<'ty, 'r>(context: &mut Context<'ty, 'r>, amount: u64) -> Result<(), anyhow::Error> {
+pub fn record_gas_allowance<'ty, 'r>(context: &mut VMContext<'ty, 'r>, amount: u64) -> Result<(), anyhow::Error> {
     context.increase_gas_usage(amount)?;
 
     let state = state_from_context(context)?;
@@ -2441,7 +2441,7 @@ pub async fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheig
     }
 }
 
-fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let data = params.remove(1);
     let id = params.remove(0)
         .as_u64()?;
@@ -2467,7 +2467,7 @@ fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'
     Ok(SysCallResult::None)
 }
 
-fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let args = params.remove(1)
         .into_owned()
         .to_vec()?
@@ -2497,7 +2497,7 @@ fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
 // Listen to an event from a contract
 // Once triggered, it will call the given chunk_id with the event parameters
 // with allocated gas and will be removed from the listeners after being called
-async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let contract = zelf?
         .as_opaque_type::<OpaqueContract>()?
         .hash
@@ -2545,7 +2545,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
     Ok(Primitive::Boolean(true).into())
 }
 
-fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
     if state.debug_mode {
         info!("[{}#{}]: {}", state.entry_contract, metadata.metadata.contract_executor, params[0].as_ref());
@@ -2554,7 +2554,7 @@ fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, co
     Ok(SysCallResult::None)
 }
 
-fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
     if state.debug_mode {
         debug!("{:?}", params[0].as_ref());
@@ -2563,16 +2563,16 @@ fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &m
     Ok(SysCallResult::None)
 }
 
-fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(metadata.metadata.contract_executor.clone())).into()))
 }
 
-fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(state.entry_contract.as_ref().clone())).into()))
 }
 
-fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let value = metadata.metadata.contract_caller
         .as_ref()
         .map(|v| Primitive::Opaque(OpaqueWrapper::new(v.clone())).into())
@@ -2581,7 +2581,7 @@ fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>
     Ok(SysCallResult::Return(value))
 }
 
-fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let param = params[0].as_ref();
     let asset: &Hash = param
         .as_opaque_type()
@@ -2595,7 +2595,7 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetad
     Ok(SysCallResult::Return(value.into()))
 }
 
-fn get_deposits(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_deposits(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let mut map = IndexMap::new();
 
     for (asset, deposit) in metadata.metadata.deposits.iter() {
@@ -2610,7 +2610,7 @@ fn get_deposits(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &m
 }
 
 // Get the current contract balance for the given asset
-async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
@@ -2625,7 +2625,7 @@ async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
 }
 
 // Get the balance for the given contract and asset
-async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -2643,7 +2643,7 @@ async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnI
     Ok(SysCallResult::Return(balance.into()))
 }
 
-async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>, payload: bool) -> Result<bool, EnvironmentError> {
+async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, payload: bool) -> Result<bool, EnvironmentError> {
     debug!("Transfer called {:?}", params);
 
     let payload = if payload {
@@ -2712,17 +2712,17 @@ async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
     Ok(true)
 }
 
-async fn transfer<'a, 'ty, 'r, P: ContractProvider>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn transfer<'a, 'ty, 'r, P: ContractProvider>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     transfer_internal::<P>(instance, params, metadata, context, false).await
         .map(|v| SysCallResult::Return(Primitive::Boolean(v).into()))
 }
 
-async fn transfer_payload<'a, 'ty, 'r, P: ContractProvider>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn transfer_payload<'a, 'ty, 'r, P: ContractProvider>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     transfer_internal::<P>(instance, params, metadata, context, true).await
         .map(|v| SysCallResult::Return(Primitive::Boolean(v).into()))
 }
 
-async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     debug!("Transfer contract called {:?}", params);
 
     let asset: Hash = params.remove(2)
@@ -2763,7 +2763,7 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -2791,7 +2791,7 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -2812,18 +2812,18 @@ async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnIn
     Ok(SysCallResult::Return(balance.into()))
 }
 
-fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let gas = context.current_gas_usage();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
 }
 
-fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let gas = context.get_gas_limit();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
 }
 
 // Increase the gas limit using contract balance
-async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let amount = params[0].as_u64()?;
 
     // Ensure we're still below the TX max usage
@@ -2889,7 +2889,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("ChainState not present in Context")?;
 
@@ -2897,7 +2897,7 @@ fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, co
 }
 
 // Returns the address that called this contract if any
-fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("ChainState not present in Context")?;
 
@@ -2910,15 +2910,15 @@ fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut 
     Ok(SysCallResult::Return(Primitive::Null.into()))
 }
 
-fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::U64(COST_PER_ASSET).into()))
 }
 
-fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::U64(COST_PER_SCHEDULED_EXECUTION).into()))
 }
 
-fn is_contract_callable<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+fn is_contract_callable<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("chain state not found")?;
 
@@ -2935,7 +2935,7 @@ fn is_contract_callable<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, par
     Ok(SysCallResult::Return(Primitive::Boolean(callable).into()))
 }
 
-fn xor_hashes<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+fn xor_hashes<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let hash1: &Hash = params[0]
         .as_ref()
         .as_opaque_type()?;
