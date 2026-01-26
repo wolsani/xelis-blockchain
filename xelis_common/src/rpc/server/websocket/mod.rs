@@ -1,5 +1,6 @@
 mod handler;
 mod http_request;
+mod events;
 
 use std::{
     collections::HashSet,
@@ -46,11 +47,13 @@ use crate::{
             error::Elapsed,
             timeout
         }
-    }
+    },
+    rpc::tid,
 };
 pub use self::{
     handler::EventWebSocketHandler,
-    http_request::HttpRequest
+    http_request::HttpRequest,
+    events::*
 };
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
@@ -91,6 +94,8 @@ pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     // Sender to send messages to the session
     channel: UnboundedSender<InnerMessage>
 }
+
+tid! { impl<'a, H: 'static> TidAble<'a> for WebSocketSession<H> where H: WebSocketHandler }
 
 impl<H> WebSocketSession<H>
 where
