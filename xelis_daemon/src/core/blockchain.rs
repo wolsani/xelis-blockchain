@@ -83,7 +83,7 @@ use xelis_common::{
     varuint::VarUint,
     contract::{ContractMetadata, ContractVersion, build_environment},
 };
-use xelis_vm::Environment;
+use xelis_vm::{Environment, tid};
 use crate::{
     config::{
         get_genesis_block_hash, get_hex_genesis_block,
@@ -237,6 +237,8 @@ pub struct Blockchain<S: Storage> {
     // Cache for mining block header templates
     mining_cache: RwLock<Option<BlockHeader>>,
 }
+
+tid! { impl<'a, S: 'static> TidAble<'a> for Blockchain<S> where S: Storage }
 
 impl<S: Storage> Blockchain<S> {
     pub async fn new(mut config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
