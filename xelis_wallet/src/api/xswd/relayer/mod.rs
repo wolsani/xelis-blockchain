@@ -15,7 +15,6 @@ use xelis_common::{
         RpcResponse,
         RpcResponseError,
         ShareableTid,
-        server::websocket::Events
     },
     tokio::sync::RwLock
 };
@@ -43,7 +42,6 @@ pub struct XSWDRelayer<W>
 where
     W: ShareableTid<'static> + XSWDHandler
 {
-    events: Events<AppStateShared, NotifyEvent>,
     xswd: XSWD<W>,
     applications: RwLock<HashMap<AppStateShared, Client>>,
     concurrency: usize,
@@ -55,10 +53,9 @@ impl<W> XSWDRelayer<W>
 where
     W: ShareableTid<'static> + XSWDHandler
 {
-    pub fn new(mut handler: RPCHandler<W>, concurrency: usize) -> XSWDRelayerShared<W> {
+    pub fn new(handler: RPCHandler<W>, concurrency: usize) -> XSWDRelayerShared<W> {
 
         Arc::new(Self {
-            events: Events::new(&mut handler),
             xswd: XSWD::new(handler),
             applications: RwLock::new(HashMap::new()),
             concurrency,
@@ -81,17 +78,17 @@ where
 
     // notify a new event to all connected WebSocket
     pub async fn notify_event<V: Serialize>(&self, event: &NotifyEvent, value: V) {
-        let sessions = self.events.sessions().await;
+        let apps = self.xswd.events().sessions().await;
         let value = json!(EventResult { event: Cow::Borrowed(event), value: json!(value) });
 
-        let applications = self.applications.read().await;
+        let sessions = self.applications.read().await;
         // We want to copy the applications reference
-        let applications = &applications;
+        let sessions = &sessions;
         let value = &value;
-        stream::iter(sessions)
+        stream::iter(apps)
             .for_each_concurrent(self.concurrency, |(app, subscriptions)| async move {
                 if let Some(id) = subscriptions.get(event) {
-                    if let Some(client) = applications.get(&app) {
+                    if let Some(client) = sessions.get(&app) {
                         let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(value)));
                         client.send_message(response.to_string()).await;
                     }
@@ -131,8 +128,6 @@ where
                 return;
             }
         }
-
-        self.events.on_close(&state).await;
 
         if let Err(e) = self.xswd.on_close(state).await {
             error!("Error while closing a XSWD Relayer: {}", e);

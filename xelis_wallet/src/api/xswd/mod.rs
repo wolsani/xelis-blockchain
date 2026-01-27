@@ -12,8 +12,11 @@ use serde_json::{
 use xelis_common::{
     async_handler,
     crypto::elgamal::PublicKey as DecompressedPublicKey,
-    rpc::*,
-    api::wallet::XSWDPrefetchPermissions,
+    rpc::{
+        *,
+        server::websocket::Events,
+    },
+    api::wallet::{NotifyEvent, XSWDPrefetchPermissions},
     tokio::sync::Semaphore
 };
 use log::{debug, info};
@@ -34,6 +37,8 @@ pub struct XSWD<W>
 where
     W: ShareableTid<'static> + XSWDHandler
 {
+    // Event manager per application
+    events: Events<AppStateShared, NotifyEvent>,
     handler: RPCHandler<W>,
     // This is used to limit to one at a time a permission request
     semaphore: Semaphore
@@ -81,6 +86,7 @@ where
         handler.register_method_with_params("xswd.prefetch_permissions", async_handler!(prefetch_permissions::<W>));
 
         Self {
+            events: Events::new(&mut handler),
             handler,
             semaphore: Semaphore::new(1)
         }
@@ -92,6 +98,13 @@ where
         &self.handler
     }
 
+    /// Events manager
+    #[inline(always)]
+    pub fn events(&self) -> &Events<AppStateShared, NotifyEvent> {
+        &self.events
+    }
+
+    /// Verify the application data
     pub async fn verify_application<P>(&self, provider: &P, app_data: &ApplicationData) -> Result<(), XSWDError>
     where
         P: XSWDProvider,
@@ -215,6 +228,8 @@ where
             self.handler.get_data().cancel_request_permission(&app).await?;
         }
 
+        self.events.on_close(&app).await;
+
         self.handler.get_data().on_app_disconnect(app).await
     }
 
@@ -224,6 +239,8 @@ where
         context.insert_ref(&self.handler);
         // Store the app id
         context.insert_ref(app);
+        // store the events manager
+        context.insert_ref(&self.events);
 
         self.handler.execute_method(&context, request).await
     }

@@ -25,7 +25,7 @@ use xelis_common::{
         RpcResponse,
         RpcResponseError,
         ShareableTid,
-        server::websocket::{Events, WebSocketHandler, WebSocketServer, WebSocketSessionShared}
+        server::websocket::{WebSocketHandler, WebSocketServer, WebSocketSessionShared}
     },
     tokio::{
         spawn_task,
@@ -100,7 +100,6 @@ where
 {
     // All applications connected to the wallet
     applications: RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>>,
-    events: Events<WebSocketSessionShared<Self>, NotifyEvent>,
     xswd: XSWD<W>,
 }
 
@@ -110,9 +109,8 @@ where
 {
     // Create a new XSWD WebSocket handler
     #[inline]
-    pub fn new(mut handler: RPCHandler<W>) -> Self {
+    pub fn new(handler: RPCHandler<W>) -> Self {
         Self {
-            events: Events::new(&mut handler),
             applications: RwLock::new(HashMap::new()),
             xswd: XSWD::new(handler),
         }
@@ -128,29 +126,36 @@ where
     // get a HashSet of all events tracked
     #[inline(always)]
     pub async fn get_tracked_events(&self) -> HashSet<NotifyEvent> {
-        self.events.get_tracked_events().await
+        self.xswd.events().get_tracked_events().await
     }
 
     // verify if a event is tracked by XSWD
     #[inline(always)]
     pub async fn is_event_tracked(&self, event: &NotifyEvent) -> bool {
-        self.events.is_event_tracked(event).await
+        self.xswd.events().is_event_tracked(event).await
     }
 
     // notify a new event to all connected WebSocket
     pub async fn notify(&self, event: &NotifyEvent, value: Value) {
         let value = json!(EventResult { event: Cow::Borrowed(event), value });
-        let sessions = self.events.sessions().await;
+        let apps = self.xswd.events().sessions().await;
 
+        let sessions = self.applications.read().await;
+        let sessions = &sessions;
         let value = &value;
-        stream::iter(sessions)
-            .for_each_concurrent(None, |(session, subscriptions)| async move {
+        stream::iter(apps)
+            .for_each_concurrent(None, |(app, subscriptions)| async move {
                 if let Some(id) = subscriptions.get(event) {
                     let response = RpcResponse::new(Cow::Borrowed(id), Cow::Borrowed(value));
+                    let response = &response;
 
-                    if let Err(e) = session.send_json(&response).await {
-                        error!("Error while sending event notification to session: {}", e);
-                    }
+                    stream::iter(sessions.iter()
+                        .filter(|(_, state)| Arc::ptr_eq(state, &app)))
+                        .for_each(|(session, _)| async move {
+                            if let Err(e) = session.send_json(response).await {
+                                error!("Error while sending event notification to session: {}", e);
+                            }
+                        }).await;
                 }
             })
             .await;
@@ -222,8 +227,6 @@ where
             let mut applications = self.applications.write().await;
             applications.remove(session)
         };
-
-        self.events.on_close(session).await;
 
         if let Some(app) = app {
             self.xswd.on_close(app).await?;
