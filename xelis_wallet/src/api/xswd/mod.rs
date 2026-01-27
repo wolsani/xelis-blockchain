@@ -218,7 +218,7 @@ where
             app.set_requesting(false);
         }
 
-        self.execute_method(app, request).await
+        Ok(self.execute_method(app, request).await)
     }
 
     pub async fn on_close(&self, app: AppStateShared) -> Result<(), Error> {
@@ -233,7 +233,7 @@ where
         self.handler.get_data().on_app_disconnect(app).await
     }
 
-    pub async fn execute_method(&self, app: &AppStateShared, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
+    pub async fn execute_method(&self, app: &AppStateShared, request: RpcRequest) -> Option<Value> {
         // Call the method
         let mut context = Context::default();
         context.insert_ref(&self.handler);
@@ -242,7 +242,7 @@ where
         // store the events manager
         context.insert_ref(&self.events);
 
-        self.handler.execute_method(&context, request).await
+        self.handler.execute_method(&mut context, request).await
     }
 
     // verify the permission for a request
