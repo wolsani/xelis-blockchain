@@ -22,8 +22,10 @@ where
     T: ShareableTid<'static>,
     H: RPCServerHandler<T>
 {
-    let result = server.get_rpc_handler().handle_request(&body).await?;
-    Ok(HttpResponse::Ok().json(result))
+    match server.get_rpc_handler().handle_request(&body).await? {
+        Some(result) => Ok(HttpResponse::Ok().json(result)),
+        None => Ok(HttpResponse::Ok().finish()),
+    }
 }
 
 // trait to retrieve easily a websocket handler for registered route

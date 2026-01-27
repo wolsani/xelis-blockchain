@@ -121,8 +121,11 @@ where
         let key: K = context.get()
             .cloned()
             .context("Session key not found")?;
+        let id: Option<Id> = context.get()
+            .cloned()
+            .context("Session id not found")?;
 
-        if !events.subscribe(key, params.notify.into_owned(), None).await {
+        if !events.subscribe(key, params.notify.into_owned(), id).await {
             return Err(InternalRpcError::EventAlreadySubscribed);
         }
 

@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use super::tid;
 
 pub const JSON_RPC_VERSION: &str = "2.0";
 
@@ -19,6 +20,9 @@ pub struct RpcRequest {
     pub method: String,
     pub params: Option<Value>
 }
+
+tid!(Id);
+tid!(RpcRequest);
 
 #[derive(Serialize)]
 pub struct RpcResponse<'a> {

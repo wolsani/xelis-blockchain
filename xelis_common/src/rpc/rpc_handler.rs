@@ -93,24 +93,26 @@ where
         handler
     }
 
-    // Handle an RPC request from raw bytes
-    pub async fn handle_request(&self, body: &[u8]) -> Result<Value, RpcResponseError> {
+    // Create a new context with a reference to the RPC handler
+    pub fn create_context<'ty, 'r>(&'r self) -> Context<'ty, 'r> {
         let mut context = Context::new();
-
-        // Add the data
         context.insert_ref(self);
+        context
+    }
 
+    // Handle an RPC request from raw bytes
+    pub async fn handle_request(&self, body: &[u8]) -> Result<Option<Value>, RpcResponseError> {
+        let context = self.create_context();
         self.handle_request_with_context(context, body).await
     }
 
     // Handle an RPC request from raw bytes with a given context
-    pub async fn handle_request_with_context<'ty, 'r>(&self, context: Context<'ty, 'r>, body: &[u8]) -> Result<Value, RpcResponseError> {
+    pub async fn handle_request_with_context<'ty, 'r>(&self, mut context: Context<'ty, 'r>, body: &[u8]) -> Result<Option<Value>, RpcResponseError> {
         let request: Value = serde_json::from_slice(body)
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
 
-        match request {
-            e @ Value::Object(_) => self.execute_method(&context, parse_request(e)?).await
-                .map(|e| e.unwrap_or(Value::Null)),
+        Ok(match request {
+            e @ Value::Object(_) => self.execute_method(&mut context, parse_request(e)?).await,
             Value::Array(requests) => {
                 if self.batch_limit.is_some_and(|v| requests.len() > v) {
                     return Err(RpcResponseError::new(None, InternalRpcError::BatchLimitExceeded))
@@ -118,22 +120,16 @@ where
 
                 let mut responses = Vec::with_capacity(requests.len());
                 for value in requests {
-                    if value.is_object() {
-                        let request = parse_request(value)?;
-                        let response = match self.execute_method(&context, request).await {
-                            Ok(response) => response.unwrap_or_default(),
-                            Err(e) => e.to_json()
-                        };
+                    let request = parse_request(value)?;
+                    if let Some(response) = self.execute_method(&mut context, request).await {
                         responses.push(response);
-                    } else {
-                        responses.push(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest).to_json());
                     }
                 }
 
-                Ok(Value::Array(responses))
+                Some(Value::Array(responses))
             },
             _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest))
-        }
+        })
     }
 
     pub fn has_method(&self, method_name: &str) -> bool {
@@ -141,8 +137,19 @@ where
     }
 
     // Execute an RPC method from a request
+    // Returns None if there is no response expected (notification)
+    pub async fn execute_method<'a, 'ty, 'r>(&'a self, context: &'a mut Context<'ty, 'r>, request: RpcRequest) -> Option<Value> {
+        let response = request.id.is_some();
+        match self.execute_method_internal(context, request).await {
+            Ok(value) if response => Some(value),
+            Err(e) if response => Some(e.to_json()),
+            _ => None
+        }
+    }
+
+    // Execute an RPC method from a request
     // it will dispatch to the correct handler based on the method name
-    pub async fn execute_method<'a, 'ty, 'r>(&'a self, context: &'a Context<'ty, 'r>, mut request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
+    pub async fn execute_method_internal<'a, 'ty, 'r>(&'a self, context: &'a mut Context<'ty, 'r>, mut request: RpcRequest) -> Result<Value, RpcResponseError> {
         let key = Cow::Borrowed(request.method.as_str());
         let handler = self.methods.get(&key)
             .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::MethodNotFound(request.method.clone())))?;
@@ -152,21 +159,20 @@ where
 
         let params = request.params.take().unwrap_or(Value::Null);
 
+        // insert the request id into the context
+        context.insert(request.id.clone());
+
         let start = Instant::now();
         let result = (handler.handler)(context, params).await
             .map_err(|err| RpcResponseError::new(request.id.clone(), err))?;
 
         histogram!("xelis_rpc_calls_ms", "method" => request.method).record(start.elapsed().as_millis() as f64);
 
-        Ok(if request.id.is_some() {
-            Some(json!({
-                "jsonrpc": JSON_RPC_VERSION,
-                "id": request.id,
-                "result": result
-            }))
-        } else {
-            None
-        })
+        Ok(json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "id": request.id,
+            "result": result
+        }))
     }
 
     // register a new RPC method handler

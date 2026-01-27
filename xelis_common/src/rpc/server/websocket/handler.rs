@@ -15,10 +15,8 @@ use crate::{
         Context,
         ShareableTid,
         RpcResponseError,
-        InternalRpcError,
         RPCHandler,
         RpcResponse,
-        parse_request
     }
 };
 use super::{WebSocketSessionShared, WebSocketHandler, events::Events};
@@ -93,41 +91,14 @@ where
         debug!("end event propagation");
     }
 
-    // Parse the request and execute the method from it
-    async fn execute_method_internal<'ty, 'r>(&self, context: &Context<'ty, 'r>, value: Value) -> Result<Option<Value>, RpcResponseError> {
-        let request = parse_request(value)?;
-        self.handler.execute_method(context, request).await
-    }
-
     // Handle the message received on the websocket
-    async fn on_message_internal<'a>(&'a self, session: &'a WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
-        let request: Value = serde_json::from_slice(message)
-            .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
-
+    async fn on_message_internal<'a>(&'a self, session: &'a WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
         let mut context = Context::default();
         context.insert_ref(session);
         context.insert_ref(&self.handler);
         context.insert_ref(&self.events);
 
-        match request {
-            e @ Value::Object(_) => self.execute_method_internal(&mut context, e).await.map(Option::unwrap_or_default),
-            Value::Array(requests) => {
-                let mut responses = Vec::new();
-                for value in requests {
-                    if value.is_object() {
-                        let response = match self.execute_method_internal(&mut context, value).await {
-                            Ok(response) => response.unwrap_or_default(),
-                            Err(e) => e.to_json()
-                        };
-                        responses.push(response);
-                    } else {
-                        responses.push(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest).to_json());
-                    }
-                }
-                Ok(Value::Array(responses))
-            },
-            _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest))
-        }
+        self.handler.handle_request_with_context(context, message).await
     }
 
     pub fn get_rpc_handler(&self) -> &RPCHandler<T> {
@@ -149,11 +120,16 @@ where
 
     async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {
         trace!("new message received on websocket");
-        let response: Value = match self.on_message_internal(session, message).await {
+        let response = match self.on_message_internal(session, message).await {
             Ok(result) => result,
-            Err(e) => e.to_json(),
+            Err(e) => Some(e.to_json()),
         };
-        session.send_text(response.to_string()).await?;
+
+        if let Some(response) = response {
+            trace!("sending response to websocket");
+            session.send_json(response).await?;
+        }
+
         Ok(())
     }
 }
