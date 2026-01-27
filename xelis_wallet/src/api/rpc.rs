@@ -32,7 +32,7 @@ use xelis_common::{
     }
 };
 use crate::{
-    api::XSWDAppId,
+    api::AppStateShared,
     error::WalletError,
     storage::Balance,
     transaction_builder::TransactionBuilderState,
@@ -735,15 +735,15 @@ async fn verify_signed_data(_: &Context<'_, '_>, params: VerifySignedDataParams)
 // In EncryptedStorage, custom trees are already prefixed
 async fn get_tree_name(context: &Context<'_, '_>, tree: String) -> Result<String, InternalRpcError> {
     // If the API is not used through XSWD, we don't need to prefix the tree name with the app id
-    if !context.contains::<&XSWDAppId>() {
+    if !context.contains::<&AppStateShared>() {
         return Ok(tree)
     }
 
     // Retrieve the app data to get its id and to have section of trees between differents dApps
-    let xswd: &XSWDAppId = context.get()
-        .context("XSWDAppId not found in context")?;
+    let app: &AppStateShared = context.get()
+        .context("XSWD not found in context")?;
 
-    Ok(format!("{}-{}", xswd.0, tree))
+    Ok(format!("{}-{}", app.get_id(), tree))
 }
 
 // Returns all keys available in the selected tree using the Query filter

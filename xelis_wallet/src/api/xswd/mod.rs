@@ -205,7 +205,7 @@ where
             app.set_requesting(false);
         }
 
-        self.execute_method(app.id(), request).await
+        self.execute_method(app, request).await
     }
 
     pub async fn on_close(&self, app: AppStateShared) -> Result<(), Error> {
@@ -218,12 +218,12 @@ where
         self.handler.get_data().on_app_disconnect(app).await
     }
 
-    pub async fn execute_method(&self, id: &XSWDAppId, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
+    pub async fn execute_method(&self, app: &AppStateShared, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
         // Call the method
         let mut context = Context::default();
         context.insert_ref(&self.handler);
         // Store the app id
-        context.insert_ref(id);
+        context.insert_ref(app);
 
         self.handler.execute_method(&context, request).await
     }

@@ -15,21 +15,21 @@ use actix_web::{
     Responder
 };
 use async_trait::async_trait;
+use futures::{StreamExt, stream};
 use log::{debug, error, info};
 use serde_json::{json, Value};
 use xelis_common::{
     api::{EventResult, wallet::NotifyEvent},
     rpc::{
-        Id,
         RPCHandler,
         RpcResponse,
         RpcResponseError,
         ShareableTid,
-        server::websocket::{WebSocketHandler, WebSocketServer, WebSocketSessionShared}
+        server::websocket::{Events, WebSocketHandler, WebSocketServer, WebSocketSessionShared}
     },
     tokio::{
         spawn_task,
-        sync::{Mutex, RwLock}
+        sync::RwLock
     }
 };
 
@@ -100,8 +100,7 @@ where
 {
     // All applications connected to the wallet
     applications: RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>>,
-    // Applications listening for events
-    listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<Id>>>>,
+    events: Events<WebSocketSessionShared<Self>, NotifyEvent>,
     xswd: XSWD<W>,
 }
 
@@ -109,50 +108,52 @@ impl<W> XSWDWebSocketHandler<W>
 where
     W: ShareableTid<'static> + XSWDHandler
 {
-    pub fn new(handler: RPCHandler<W>) -> Self {
+    // Create a new XSWD WebSocket handler
+    #[inline]
+    pub fn new(mut handler: RPCHandler<W>) -> Self {
         Self {
+            events: Events::new(&mut handler),
             applications: RwLock::new(HashMap::new()),
-            listeners: Mutex::new(HashMap::new()),
             xswd: XSWD::new(handler),
         }
     }
 
     // This method is used to get the applications HashMap
     // be careful by using it, and if you delete a session, please disconnect it
+    #[inline(always)]
     pub fn get_applications(&self) -> &RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>> {
         &self.applications
     }
 
     // get a HashSet of all events tracked
+    #[inline(always)]
     pub async fn get_tracked_events(&self) -> HashSet<NotifyEvent> {
-        let sessions = self.listeners.lock().await;
-        HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
+        self.events.get_tracked_events().await
     }
 
     // verify if a event is tracked by XSWD
+    #[inline(always)]
     pub async fn is_event_tracked(&self, event: &NotifyEvent) -> bool {
-        let sessions = self.listeners.lock().await;
-        sessions
-            .values()
-            .find(|e| e.keys().into_iter().find(|x| *x == event).is_some())
-            .is_some()
+        self.events.is_event_tracked(event).await
     }
 
     // notify a new event to all connected WebSocket
     pub async fn notify(&self, event: &NotifyEvent, value: Value) {
         let value = json!(EventResult { event: Cow::Borrowed(event), value });
-        let sessions = self.listeners.lock().await;
-        for (session, subscriptions) in sessions.iter() {
-            if let Some(id) = subscriptions.get(event) {
-                let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
-                let session = session.clone();
-                spawn_task("xswd-notify", async move {
-                    if let Err(e) = session.send_text(response.to_string()).await {
-                        debug!("Error occured while notifying a new event: {}", e);
-                    };
-                });
-            }
-        }
+        let sessions = self.events.sessions().await;
+
+        let value = &value;
+        stream::iter(sessions)
+            .for_each_concurrent(None, |(session, subscriptions)| async move {
+                if let Some(id) = subscriptions.get(event) {
+                    let response = RpcResponse::new(Cow::Borrowed(id), Cow::Borrowed(value));
+
+                    if let Err(e) = session.send_json(&response).await {
+                        error!("Error while sending event notification to session: {}", e);
+                    }
+                }
+            })
+            .await;
     }
 
     // register a new application
@@ -222,10 +223,7 @@ where
             applications.remove(session)
         };
 
-        {
-            let mut listeners = self.listeners.lock().await;
-            listeners.remove(session);
-        }
+        self.events.on_close(session).await;
 
         if let Some(app) = app {
             self.xswd.on_close(app).await?;
