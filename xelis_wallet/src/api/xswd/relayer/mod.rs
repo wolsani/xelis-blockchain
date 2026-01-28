@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use futures::{stream, StreamExt};
 use log::{debug, error};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use xelis_common::{
     api::{EventResult, wallet::NotifyEvent},
     rpc::{
@@ -26,10 +26,11 @@ use super::{
     AppStateShared,
     XSWDHandler,
     XSWDProvider,
-    XSWD
+    XSWD,
+    XSWDResponse
 };
 
-use client::Client;
+use client::*;
 
 // XSWD as a client mode
 // Instead of being a server
@@ -102,7 +103,7 @@ where
         self.xswd.verify_application(self.as_ref(), &app_data.app_data).await?;
 
         let state = Arc::new(AppState::new(app_data.app_data));
-        let client = Client::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone()).await?;
+        let client = ClientImpl::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone()).await?;
 
         let response = self.xswd.add_application(&state).await?;
         client.send_message(response).await;
@@ -117,7 +118,7 @@ where
     }
 
     #[inline(always)]
-    pub async fn on_message(&self, state: &AppStateShared, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
+    pub async fn on_message(&self, state: &AppStateShared, message: &[u8]) -> Result<XSWDResponse, RpcResponseError> {
         self.xswd.on_request(self, state, message).await
     }
 

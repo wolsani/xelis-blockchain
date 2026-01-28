@@ -10,14 +10,17 @@ use serde_json::{
     json
 };
 use xelis_common::{
+    api::{
+        wallet::{NotifyEvent, XSWDPrefetchPermissions},
+        daemon::NotifyEvent as DaemonNotifyEvent
+    },
     async_handler,
     crypto::elgamal::PublicKey as DecompressedPublicKey,
     rpc::{
-        *,
         server::websocket::Events,
+        *
     },
-    api::wallet::{NotifyEvent, XSWDPrefetchPermissions},
-    tokio::sync::Semaphore
+    tokio::sync::{Semaphore, broadcast}
 };
 use log::{debug, info};
 
@@ -44,6 +47,11 @@ where
     semaphore: Semaphore
 }
 
+pub enum XSWDResponse {
+    Request(Option<Value>),
+    Event(DaemonNotifyEvent, Option<(broadcast::Receiver<Value>, Option<Id>)>, Option<Value>)
+}
+
 // WASM doesn't support Send bounds (single-threaded)
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -58,7 +66,7 @@ pub trait XSWDHandler {
     async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error>;
 
     // Call a node RPC method through the wallet current connection
-    async fn call_node_with(&self, request: RpcRequest) -> Result<Option<Value>, RpcResponseError>;
+    async fn call_node_with(&self, app_state: &AppStateShared, request: RpcRequest) -> Result<XSWDResponse, RpcResponseError>;
 
     // When an application has disconnected
     async fn on_app_disconnect(&self, app_state: AppStateShared) -> Result<(), Error>;
@@ -189,7 +197,7 @@ where
         }))
     }
 
-    pub async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<Option<Value>, RpcResponseError>
+    pub async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<XSWDResponse, RpcResponseError>
     where
         P: XSWDProvider
     {
@@ -198,7 +206,7 @@ where
         if request.method.starts_with("node.") {
             // Remove the 5 first chars (node.)
             request.method = request.method[5..].into();
-            return self.handler.get_data().call_node_with(request).await
+            return self.handler.get_data().call_node_with(app, request).await
         }
 
         // Verify that the method start with "wallet."
@@ -218,7 +226,7 @@ where
             app.set_requesting(false);
         }
 
-        Ok(self.execute_method(app, request).await)
+        Ok(XSWDResponse::Request(self.execute_method(app, request).await))
     }
 
     pub async fn on_close(&self, app: AppStateShared) -> Result<(), Error> {

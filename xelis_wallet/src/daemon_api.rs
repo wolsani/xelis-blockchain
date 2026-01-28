@@ -50,6 +50,12 @@ impl DaemonAPI {
         })
     }
 
+    // Get the event channel capacity
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
     // Get the underlying websocket client
     #[inline]
     pub fn client(&self) -> &WebSocketJsonRPCClient<NotifyEvent> {

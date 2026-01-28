@@ -19,7 +19,11 @@ use futures::{StreamExt, stream};
 use log::{debug, error, info};
 use serde_json::{json, Value};
 use xelis_common::{
-    api::{EventResult, wallet::NotifyEvent},
+    api::{
+        EventResult,
+        daemon::NotifyEvent as DaemonNotifyEvent,
+        wallet::NotifyEvent
+    },
     rpc::{
         RPCHandler,
         RpcResponse,
@@ -29,7 +33,8 @@ use xelis_common::{
     },
     tokio::{
         spawn_task,
-        sync::RwLock
+        sync::RwLock,
+        task
     }
 };
 
@@ -41,7 +46,8 @@ use crate::{
         XSWDError,
         XSWDProvider,
         XSWDHandler,
-        XSWD
+        XSWD,
+        XSWDResponse,
     },
     config::XSWD_BIND_ADDRESS
 };
@@ -100,6 +106,7 @@ where
 {
     // All applications connected to the wallet
     applications: RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>>,
+    node_events: RwLock<HashMap<DaemonNotifyEvent, HashMap<AppStateShared, task::JoinHandle<()>>>>,
     xswd: XSWD<W>,
 }
 
@@ -113,6 +120,7 @@ where
         Self {
             applications: RwLock::new(HashMap::new()),
             xswd: XSWD::new(handler),
+            node_events: RwLock::new(HashMap::new()),
         }
     }
 
@@ -189,7 +197,41 @@ where
 
         // Application is already registered, verify permission and call the method
         if let Some(app) = app_state {
-            self.xswd.on_request(self, &app, message).await
+            match self.xswd.on_request(self, &app, message).await? {
+                XSWDResponse::Request(v) => Ok(v),
+                XSWDResponse::Event(event, stream, response) => {
+                    let mut events = self.node_events.write().await;
+                    let apps = events.entry(event)
+                        .or_insert_with(HashMap::new);
+
+                    match stream {
+                        Some((mut stream, id), ) => {
+                            if !apps.contains_key(&app) {
+                                let session = session.clone();
+                                let handle = spawn_task("xswd-event-listener", async move {
+                                    while let Ok(value) = stream.recv().await {
+                                        // we need to map the result to the requested id
+                                        let response = RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value));
+                                        if let Err(e) = session.send_json(response).await {
+                                            error!("Error while sending event notification to session: {}", e);
+                                            break;
+                                        }
+                                    }
+                                });
+
+                                apps.insert(app.clone(), handle);
+                            }
+                        },
+                        None => {
+                            if let Some(handle) = apps.remove(&app) {
+                                handle.abort();
+                            }
+                        },
+                    };
+
+                    Ok(response)
+                }
+            }
         } else {
             let app_data: ApplicationData = serde_json::from_slice(&message)
                 .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;

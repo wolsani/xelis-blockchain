@@ -105,7 +105,7 @@ use {
 
 #[cfg(feature = "xswd")]
 use {
-    serde_json::{json, Value},
+    serde_json::json,
     async_trait::async_trait,
     crate::api::{
         ApplicationDataRelayer,
@@ -117,6 +117,7 @@ use {
         PermissionRequest,
         XSWDHandler,
         Permission,
+        XSWDResponse,
     },
     xelis_common::{
         rpc::{
@@ -133,6 +134,10 @@ use {
                 unbounded_channel
             },
             oneshot,
+        },
+        api::{
+            SubscribeParams,
+            daemon::NotifyEvent as DaemonNotifyEvent,
         },
         crypto::elgamal::PublicKey as DecompressedPublicKey
     }
@@ -1507,7 +1512,7 @@ impl XSWDHandler for Arc<Wallet> {
         Ok(self.get_keypair().get_public_key())
     }
 
-    async fn call_node_with(&self, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
+    async fn call_node_with(&self, _: &AppStateShared, mut request: RpcRequest) -> Result<XSWDResponse, RpcResponseError> {
         let id = request.id;
         #[cfg(feature = "network_handler")]
         {
@@ -1515,7 +1520,43 @@ impl XSWDHandler for Arc<Wallet> {
             if let Some(network_handler) = network_handler.as_ref() {
                 if network_handler.is_running().await {
                     let api = network_handler.get_api();
-                    return Ok(if id.is_some() {
+
+                    // Special case: handle subscribe/unsubscribe methods
+                    if matches!(request.method.as_str(), "subscribe" | "unsubscribe") {
+                        let params: SubscribeParams<DaemonNotifyEvent> = serde_json::from_value(
+                            request.params.take()
+                                .ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::InvalidParams("Missing event parameter")))?
+                        ).map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+
+                        let event = params.notify.into_owned();
+
+                        if request.method == "subscribe" {
+                            let stream = api.client()
+                                .subscribe_event_raw(event.clone(), api.capacity()).await
+                                .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+    
+                            let response = if id.is_some() {
+                                Some(json!(RpcResponse::new(Cow::Owned(id.clone()), Cow::Owned(json!(true)))))
+                            } else {
+                                None
+                            };
+    
+                            // subscribe to event and return the stream
+                            return Ok(XSWDResponse::Event(event, Some((stream, id)), response));
+                        } else if request.method == "unsubscribe" {
+                            let response = if id.is_some() {
+                                // we just return true for unsubscribe as there is no real unsubscribe on our side
+                                // because we don't want to cut the event for others apps
+                                Some(json!(RpcResponse::new(Cow::Owned(id), Cow::Owned(json!(true)))))
+                            } else {
+                                None
+                            };
+
+                            return Ok(XSWDResponse::Event(event, None, response));
+                        }
+                    }
+
+                    let response = if id.is_some() {
                         let response = api.client()
                             .call_with(&request.method, &request.params).await
                             .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
@@ -1527,7 +1568,9 @@ impl XSWDHandler for Arc<Wallet> {
                             .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
 
                         None
-                    })
+                    };
+
+                    return Ok(XSWDResponse::Request(response))
                 }
             }
         }
