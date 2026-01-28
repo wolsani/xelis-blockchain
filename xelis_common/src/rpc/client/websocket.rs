@@ -613,7 +613,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Subscribe to an event
     // Capacity represents the number of events that can be stored in the channel
-    pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
+    pub async fn subscribe_event_raw(&self, event: E, capacity: usize) -> JsonRPCResult<broadcast::Receiver<Value>> {
         trace!("Subscribing to event {:?}", event);
         // Returns a Receiver for this event if already registered
         {
@@ -621,7 +621,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             if let Some(id) = ids.get(&event) {
                 let handlers = self.handler_by_id.lock().await;
                 if let Some(sender) = handlers.get(id) {
-                    return Ok(EventReceiver::new(sender.subscribe()));
+                    return Ok(sender.subscribe());
                 }
             }
         }
@@ -647,6 +647,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             handlers.insert(id, sender);
         }
 
+        Ok(receiver)
+    }
+
+    // Subscribe to an event with typed receiver
+    pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
+        let receiver = self.subscribe_event_raw(event, capacity).await?;
         Ok(EventReceiver::new(receiver))
     }
 
