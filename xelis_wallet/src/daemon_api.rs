@@ -7,8 +7,6 @@ use std::{
 
 use anyhow::Result;
 use indexmap::IndexSet;
-use serde::Serialize;
-use serde_json::Value;
 use xelis_common::{
     account::VersionedBalance,
     api::{daemon::*, RPCContractLog},
@@ -20,7 +18,6 @@ use xelis_common::{
     rpc::client::{
         BatchRequest,
         EventReceiver,
-        JsonRPCResult,
         WebSocketJsonRPCClient,
         WebSocketJsonRPCClientImpl
     },
@@ -53,11 +50,14 @@ impl DaemonAPI {
         })
     }
 
-    pub fn get_client(&self) -> &WebSocketJsonRPCClient<NotifyEvent> {
+    // Get the underlying websocket client
+    #[inline]
+    pub fn client(&self) -> &WebSocketJsonRPCClient<NotifyEvent> {
         &self.client
     }
 
     // is the websocket connection alive
+    #[inline]
     pub fn is_online(&self) -> bool {
         trace!("is_online");
         self.client.is_online()
@@ -104,11 +104,6 @@ impl DaemonAPI {
     pub async fn on_connection_lost(&self) -> broadcast::Receiver<()> {
         trace!("on_connection_lost");
         self.client.on_connection_lost().await
-    }
-
-    pub async fn call<P: Serialize>(&self, method: &String, params: &P) -> JsonRPCResult<Value> {
-        trace!("call: {}", method);
-        self.client.call_with(method.as_str(), params).await
     }
 
     pub async fn on_new_block_event(&self) -> Result<EventReceiver<NewBlockEvent>> {

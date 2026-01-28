@@ -1507,7 +1507,7 @@ impl XSWDHandler for Arc<Wallet> {
         Ok(self.get_keypair().get_public_key())
     }
 
-    async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
+    async fn call_node_with(&self, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
         let id = request.id;
         #[cfg(feature = "network_handler")]
         {
@@ -1515,10 +1515,19 @@ impl XSWDHandler for Arc<Wallet> {
             if let Some(network_handler) = network_handler.as_ref() {
                 if network_handler.is_running().await {
                     let api = network_handler.get_api();
-                    let response = api.call(&request.method, &request.params).await
-                        .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                    return Ok(if id.is_some() {
+                        let response = api.client()
+                            .call_with(&request.method, &request.params).await
+                            .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+    
+                        Some(json!(RpcResponse::new(Cow::Owned(id), Cow::Owned(response))))
+                    } else {
+                        api.client()
+                            .notify_with(&request.method, &request.params).await
+                            .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
 
-                    return Ok(json!(RpcResponse::new(Cow::Owned(id), Cow::Owned(response))))
+                        None
+                    })
                 }
             }
         }

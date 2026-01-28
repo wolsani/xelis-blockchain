@@ -1809,9 +1809,9 @@ async fn status(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comm
     #[cfg(feature = "network_handler")]
     if let Some(network_handler) = wallet.get_network_handler().lock().await.as_ref() {
         let api = network_handler.get_api();
-        let is_online = api.get_client().is_online();
+        let is_online = api.client().is_online();
         manager.message(format!("Network handler is online: {}", is_online));
-        manager.message(format!("Connected to: {}", api.get_client().get_target()));
+        manager.message(format!("Connected to: {}", api.client().get_target()));
 
         if is_online {
             let info = api.get_info().await

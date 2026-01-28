@@ -187,7 +187,7 @@ async fn network_info(context: &Context<'_, '_>) -> Result<NetworkInfoResult, In
                 let inner = api.get_info().await?;
                 Ok(NetworkInfoResult {
                     inner,
-                    connected_to: api.get_client().get_target().to_owned(),
+                    connected_to: api.client().get_target().to_owned(),
                 })
             } else {
                 Err(WalletError::NotOnlineMode.into())
