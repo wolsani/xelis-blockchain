@@ -1280,7 +1280,7 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     let entries = module.module.chunks()
         .iter()
         .enumerate()
-        .filter(|(_, chunk)| matches!(chunk.access, Access::Entry))
+        .filter(|(_, chunk)| matches!(chunk.access, Access::Entry { .. }))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
 

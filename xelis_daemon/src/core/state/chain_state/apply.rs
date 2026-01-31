@@ -1064,7 +1064,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         gas_sources: IndexMap<Source, u64>,
         max_gas: u64,
         chunk_id: u16,
-        params: impl DoubleEndedIterator<Item = ValueCell>,
+        params: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
         post_hook: bool,
     ) -> Result<(), BlockchainError> {
         debug!("processing scheduled execution of contract {} with caller {}", contract, caller.get_hash());
