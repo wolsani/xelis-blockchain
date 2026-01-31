@@ -136,7 +136,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     invoke: InvokeContract,
     contract: Cow<'a, Hash>,
     deposits: IndexMap<Hash, ContractDeposit>,
-    parameters: impl DoubleEndedIterator<Item = ValueCell>,
+    parameters: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
     max_gas: u64,
 ) -> Result<(u64, u64, ExitValue), VMError> {
     debug!("run virtual machine with max gas {}", max_gas);
@@ -159,10 +159,10 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     // This is the first chunk to be called
     match invoke {
         InvokeContract::Entry(entry) => {
-            vm.invoke_entry_chunk(entry)?;
+            vm.invoke_chunk_with_args(entry, parameters)?;
         },
         InvokeContract::Hook(hook) => {
-            if !vm.invoke_hook_id(hook)? {
+            if !vm.invoke_hook_id_with_args(hook, parameters)? {
                 warn!("Invoke contract {} hook {} not found", contract, hook);
                 return Ok((0, max_gas, ExitValue::Error(ExitError::UnknownHook)))
             }
@@ -173,15 +173,9 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
                 return Ok((0, max_gas, ExitValue::Error(ExitError::InvalidEntry)))
             }
 
-            vm.invoke_chunk_id(chunk as usize)?;
+            vm.invoke_chunk_with_args(chunk, parameters)?;
             chain_state.executions.allow_executions = allow_executions;
         }
-    }
-
-    // We need to push it in reverse order because the VM will pop them in reverse order
-    for constant in parameters.rev() {
-        trace!("Pushing constant: {}", constant);
-        vm.push_stack(constant)?;
     }
 
     let debug_mode = chain_state.debug_mode;
@@ -273,7 +267,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     contract: Cow<'a, Hash>,
     // TODO: rework it
     deposits: Option<(&'a IndexMap<Hash, ContractDeposit>, &HashMap<&Hash, DecompressedDepositCt>)>,
-    parameters: impl DoubleEndedIterator<Item = ValueCell>,
+    parameters: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
     gas_sources: IndexMap<Source, u64>,
     max_gas: u64,
     invoke: InvokeContract,

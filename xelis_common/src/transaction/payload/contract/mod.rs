@@ -13,10 +13,13 @@ use xelis_vm::{
     Module,
     OpaqueWrapper,
     Primitive,
+    TypePacked,
     ValueCell,
-    U256
+    ValuePointer,
+    U256,
 };
 use crate::{
+    contract::ContractVersion,
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -256,33 +259,96 @@ impl Serializer for ValueCell {
 
     // No deserialization can occurs here as we're missing context
     fn read(reader: &mut Reader) -> Result<ValueCell, ReaderError> {
-        // TODO: make it iterative and not recursive to prevent stack overflow attacks!!!!
-        Ok(match reader.read_u8()? {
-            0 => ValueCell::Primitive(Primitive::read(reader)?),
-            1 => {
-                let len = DynamicLen::read(reader)?.0;
-                ValueCell::Bytes(reader.read_bytes(len)?)
-            },
-            2 => {
-                let len = DynamicLen::read(reader)?.0;
-                let mut values = Vec::new();
-                for _ in 0..len {
-                    values.push(ValueCell::read(reader)?.into());
+        // Iterative approach to prevent stack overflow attacks
+        // Maximum nesting depth allowed
+        const MAX_DEPTH: usize = 16;
+
+        enum Pending {
+            Object { remaining: usize, values: Vec<ValuePointer> },
+            Map { remaining: usize, map: IndexMap<ValueCell, ValuePointer>, pending_key: Option<ValueCell> },
+        }
+
+        let mut stack: Vec<Pending> = Vec::new();
+        let mut result: Option<ValueCell> = None;
+
+        loop {
+            // If we have a result, process it
+            if let Some(value) = result.take() {
+                let Some(last) = stack.last_mut() else {
+                    return Ok(value);
+                };
+
+                // Add the value to the parent container
+                match last {
+                    Pending::Object { remaining, values } => {
+                        values.push(value.into());
+                        *remaining -= 1;
+                    }
+                    Pending::Map { remaining, map, pending_key } => {
+                        if let Some(key) = pending_key.take() {
+                            map.insert(key, value.into());
+                            *remaining -= 1;
+                        } else {
+                            *pending_key = Some(value);
+                        }
+                    }
                 }
-                ValueCell::Object(values)
-            },
-            3 => {
-                let len = DynamicLen::read(reader)?.0;
-                let mut map = IndexMap::new();
-                for _ in 0..len {
-                    let key = ValueCell::read(reader)?;
-                    let value = ValueCell::read(reader)?;
-                    map.insert(key, value.into());
+
+                // Check if completed containers can be popped
+                while let Some(top) = stack.last() {
+                    let is_complete = match top {
+                        Pending::Object { remaining, .. } => *remaining == 0,
+                        Pending::Map { remaining, pending_key, .. } => *remaining == 0 && pending_key.is_none(),
+                    };
+
+                    if is_complete {
+                        let completed = stack.pop().unwrap();
+                        result = Some(match completed {
+                            Pending::Object { values, .. } => ValueCell::Object(values),
+                            Pending::Map { map, .. } => ValueCell::Map(Box::new(map)),
+                        });
+                    } else {
+                        break;
+                    }
                 }
-                ValueCell::Map(Box::new(map))
-            },
-            _ => return Err(ReaderError::InvalidValue)
-        })
+
+                if result.is_some() {
+                    continue;
+                }
+            }
+
+            // Read the next value
+            match reader.read_u8()? {
+                0 => result = Some(ValueCell::Primitive(Primitive::read(reader)?)),
+                1 => {
+                    let len = DynamicLen::read(reader)?.0;
+                    result = Some(ValueCell::Bytes(reader.read_bytes(len)?));
+                }
+                2 => {
+                    let len = DynamicLen::read(reader)?.0;
+                    if len == 0 {
+                        result = Some(ValueCell::Object(Vec::new()));
+                    } else {
+                        if stack.len() >= MAX_DEPTH {
+                            return Err(ReaderError::InvalidValue);
+                        }
+                        stack.push(Pending::Object { remaining: len, values: Vec::with_capacity(len) });
+                    }
+                }
+                3 => {
+                    let len = DynamicLen::read(reader)?.0;
+                    if len == 0 {
+                        result = Some(ValueCell::Map(Box::new(IndexMap::new())));
+                    } else {
+                        if stack.len() >= MAX_DEPTH {
+                            return Err(ReaderError::InvalidValue);
+                        }
+                        stack.push(Pending::Map { remaining: len, map: IndexMap::new(), pending_key: None });
+                    }
+                }
+                _ => return Err(ReaderError::InvalidValue)
+            }
+        }
     }
 
     fn size(&self) -> usize {
@@ -329,19 +395,45 @@ impl Serializer for Module {
             constant.write(writer);
         }
 
+        let version = writer.context()
+            .get_optional::<ContractVersion>()
+            .cloned()
+            .unwrap_or(ContractVersion::V0);
+
+        fn write_parameters(writer: &mut Writer, parameters: &Option<Vec<TypePacked>>, version: ContractVersion) {
+            if version >= ContractVersion::V1 {
+                if let Some(params) = parameters {
+                    writer.write_bool(true);                                
+                    writer.write_u8(params.len() as u8);
+                    for param in params {
+                        param.write(writer);
+                    }
+                } else {
+                    writer.write_bool(false);
+                }
+            }
+        }
+
+         // Function helper to write parameters based on contract version
         let chunks = self.chunks();
         writer.write_u16(chunks.len() as u16);
         for entry in chunks {
             let instructions = entry.chunk.get_instructions();
             DynamicLen(instructions.len()).write(writer);
             writer.write_bytes(instructions);
-            match entry.access {
-                Access::All => writer.write_u8(0),
+            match &entry.access {
+                Access::All { parameters } => {
+                    writer.write_u8(0);
+                    write_parameters(writer, parameters, version);
+                },
                 Access::Internal => writer.write_u8(1),
-                Access::Entry => writer.write_u8(2),
+                Access::Entry { parameters } => {
+                    writer.write_u8(2);
+                    write_parameters(writer, parameters, version);
+                },
                 Access::Hook { id } => {
                     writer.write_u8(3);
-                    writer.write_u8(id);
+                    writer.write_u8(*id);
                 }
             }
         }
@@ -362,15 +454,39 @@ impl Serializer for Module {
         let mut chunks = Vec::with_capacity(chunks_len as usize);
         let mut hooks = IndexMap::new();
 
+        let version = reader.context()
+            .get_optional::<ContractVersion>()
+            .cloned()
+            .unwrap_or(ContractVersion::V0);
+
+        // Function helper to read parameters based on contract version
+        fn read_parameters(reader: &mut Reader, version: ContractVersion) -> Result<Option<Vec<TypePacked>>, ReaderError> {
+            if version >= ContractVersion::V1 {
+                let params_len = Option::<u8>::read(reader)?;
+                if let Some(len) = params_len {
+                    let mut params = Vec::with_capacity(len as usize);
+                    for _ in 0..len {
+                        params.push(TypePacked::read(reader)?);
+                    }
+
+                    Ok(Some(params))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+
         for i in 0..chunks_len {
             let instructions_len = DynamicLen::read(reader)?.0;
             let instructions = reader.read_bytes(instructions_len)?;
             let chunk = Chunk::from_instructions(instructions);
 
             let access = match reader.read_u8()? {
-                0 => Access::All,
+                0 => Access::All { parameters: read_parameters(reader, version)? },
                 1 => Access::Internal,
-                2 => Access::Entry,
+                2 => Access::Entry { parameters: read_parameters(reader, version)? },
                 3 => {
                     let id = reader.read_u8()?;
 
@@ -398,8 +514,9 @@ impl Serializer for Module {
             .iter()
             .map(|entry| {
                 let instructions = entry.chunk.get_instructions();
-                DynamicLen(instructions.len()).size() + instructions.len() + match entry.access {
-                    Access::All | Access::Internal | Access::Entry => 1,
+                DynamicLen(instructions.len()).size() + instructions.len() + match &entry.access {
+                    Access::Internal => 1,
+                    Access::All { parameters } | Access::Entry { parameters } => parameters.as_ref().map_or(1, |v| 2 + v.iter().map(Serializer::size).sum::<usize>()),
                     Access::Hook { id } => 1 + id.size(),
                 }
         })
@@ -460,5 +577,221 @@ mod tests {
         test_serde_cell(ValueCell::Map(Box::new([
             (Primitive::U64(42).into(), Primitive::String("Hello World!".to_owned()).into())
         ].into_iter().collect())));
+    }
+
+    #[test]
+    fn test_serde_empty_containers() {
+        // Empty object
+        test_serde_cell(ValueCell::Object(vec![]));
+        // Empty map
+        test_serde_cell(ValueCell::Map(Box::new(IndexMap::new())));
+        // Empty bytes
+        test_serde_cell(ValueCell::Bytes(vec![]));
+        // Empty string
+        test_serde_cell(ValueCell::Primitive(Primitive::String(String::new())));
+    }
+
+    #[test]
+    fn test_serde_nested_objects() {
+        // Object containing objects
+        test_serde_cell(ValueCell::Object(vec![
+            ValueCell::Object(vec![
+                Primitive::U64(1).into(),
+                Primitive::U64(2).into(),
+            ]).into(),
+            ValueCell::Object(vec![
+                Primitive::U64(3).into(),
+                Primitive::U64(4).into(),
+            ]).into(),
+        ]));
+
+        // Deeply nested object (3 levels)
+        test_serde_cell(ValueCell::Object(vec![
+            ValueCell::Object(vec![
+                ValueCell::Object(vec![
+                    Primitive::String("deep".to_owned()).into(),
+                ]).into(),
+            ]).into(),
+        ]));
+    }
+
+    #[test]
+    fn test_serde_nested_maps() {
+        // Map containing maps
+        let inner_map: IndexMap<ValueCell, ValuePointer> = [
+            (Primitive::U64(1).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
+            (Primitive::U64(2).into(), ValueCell::Primitive(Primitive::String("two".to_owned())).into()),
+        ].into_iter().collect();
+
+        let outer_map: IndexMap<ValueCell, ValuePointer> = [
+            (Primitive::String("inner".to_owned()).into(), ValueCell::Map(Box::new(inner_map)).into()),
+        ].into_iter().collect();
+
+        test_serde_cell(ValueCell::Map(Box::new(outer_map)));
+    }
+
+    #[test]
+    fn test_serde_mixed_nested() {
+        // Object containing map containing object
+        let inner_obj = ValueCell::Object(vec![
+            Primitive::U64(42).into(),
+            Primitive::Boolean(true).into(),
+        ]);
+
+        let map: IndexMap<ValueCell, ValuePointer> = [
+            (Primitive::String("data".to_owned()).into(), inner_obj.into()),
+        ].into_iter().collect();
+
+        test_serde_cell(ValueCell::Object(vec![
+            ValueCell::Map(Box::new(map)).into(),
+            Primitive::U64(100).into(),
+        ]));
+    }
+
+    #[test]
+    fn test_serde_map_with_complex_keys() {
+        // Map with object as key
+        let key_obj = ValueCell::Object(vec![
+            Primitive::U64(1).into(),
+            Primitive::U64(2).into(),
+        ]);
+
+        let map: IndexMap<ValueCell, ValuePointer> = [
+            (key_obj, ValueCell::Primitive(Primitive::String("value".to_owned())).into()),
+        ].into_iter().collect();
+
+        test_serde_cell(ValueCell::Map(Box::new(map)));
+    }
+
+    #[test]
+    fn test_serde_large_flat_object() {
+        // Object with many elements
+        let values: Vec<ValuePointer> = (0..1000)
+            .map(|i| Primitive::U64(i).into())
+            .collect();
+        test_serde_cell(ValueCell::Object(values));
+    }
+
+    #[test]
+    fn test_serde_large_flat_map() {
+        // Map with many entries
+        let map: IndexMap<ValueCell, ValuePointer> = (0..500)
+            .map(|i| (Primitive::U64(i).into(), ValueCell::Primitive(Primitive::String(format!("value_{}", i))).into()))
+            .collect();
+        test_serde_cell(ValueCell::Map(Box::new(map)));
+    }
+
+    #[test]
+    fn test_serde_deep_nesting() {
+        // Create a deeply nested structure (within 16 depth limit)
+        let mut cell = ValueCell::Primitive(Primitive::U64(42));
+        for _ in 0..16 {
+            cell = ValueCell::Object(vec![cell.into()]);
+        }
+        test_serde_cell(cell);
+    }
+
+    #[test]
+    fn test_serde_deep_nesting_exceeds_limit() {
+        // Create a structure that exceeds the 16 depth limit
+        let mut cell = ValueCell::Primitive(Primitive::U64(42));
+        for _ in 0..17 {
+            cell = ValueCell::Object(vec![cell.into()]);
+        }
+        let bytes = cell.to_bytes();
+        assert!(ValueCell::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn test_serde_deep_map_nesting() {
+        // Deeply nested maps (within 16 depth limit)
+        let mut cell = ValueCell::Primitive(Primitive::String("innermost".to_owned()));
+        for i in 0..16 {
+            let map: IndexMap<ValueCell, ValuePointer> = [
+                (Primitive::U64(i).into(), cell.into()),
+            ].into_iter().collect();
+            cell = ValueCell::Map(Box::new(map));
+        }
+        test_serde_cell(cell);
+    }
+
+    #[test]
+    fn test_serde_deep_map_nesting_exceeds_limit() {
+        // Deeply nested maps that exceed the 16 depth limit
+        let mut cell = ValueCell::Primitive(Primitive::String("innermost".to_owned()));
+        for i in 0..17 {
+            let map: IndexMap<ValueCell, ValuePointer> = [
+                (Primitive::U64(i).into(), cell.into()),
+            ].into_iter().collect();
+            cell = ValueCell::Map(Box::new(map));
+        }
+        let bytes = cell.to_bytes();
+        assert!(ValueCell::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn test_serde_alternating_object_map() {
+        // Alternating between objects and maps in nesting
+        let inner = ValueCell::Primitive(Primitive::U64(999));
+        
+        let map: IndexMap<ValueCell, ValuePointer> = [
+            (Primitive::U64(0).into(), inner.into()),
+        ].into_iter().collect();
+        
+        let obj = ValueCell::Object(vec![ValueCell::Map(Box::new(map)).into()]);
+        
+        let outer_map: IndexMap<ValueCell, ValuePointer> = [
+            (Primitive::String("nested".to_owned()).into(), obj.into()),
+        ].into_iter().collect();
+        
+        test_serde_cell(ValueCell::Object(vec![
+            ValueCell::Map(Box::new(outer_map)).into(),
+        ]));
+    }
+
+    #[test]
+    fn test_serde_object_with_all_primitive_types() {
+        test_serde_cell(ValueCell::Object(vec![
+            Primitive::Null.into(),
+            Primitive::Boolean(true).into(),
+            Primitive::Boolean(false).into(),
+            Primitive::U8(255).into(),
+            Primitive::U16(65535).into(),
+            Primitive::U32(u32::MAX).into(),
+            Primitive::U64(u64::MAX).into(),
+            Primitive::U128(u128::MAX).into(),
+            Primitive::U256(U256::MAX).into(),
+            Primitive::String("test string".to_owned()).into(),
+            Primitive::Range(Box::new((Primitive::U64(0), Primitive::U64(100)))).into(),
+            Primitive::Opaque(OpaqueWrapper::new(Hash::zero())).into(),
+        ]));
+    }
+
+    #[test]
+    fn test_serde_map_multiple_entries() {
+        // Map with multiple entries of different types
+        let map: IndexMap<ValueCell, ValuePointer> = [
+            (Primitive::U64(1).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
+            (Primitive::U64(2).into(), ValueCell::Primitive(Primitive::Boolean(true)).into()),
+            (Primitive::U64(3).into(), ValueCell::Bytes(vec![1, 2, 3]).into()),
+            (Primitive::String("key".to_owned()).into(), ValueCell::Primitive(Primitive::U128(12345)).into()),
+        ].into_iter().collect();
+        test_serde_cell(ValueCell::Map(Box::new(map)));
+    }
+
+    #[test]
+    fn test_serde_bytes_in_containers() {
+        // Bytes inside object
+        test_serde_cell(ValueCell::Object(vec![
+            ValueCell::Bytes(vec![1, 2, 3, 4, 5]).into(),
+            ValueCell::Bytes(vec![]).into(),
+            ValueCell::Bytes(vec![255; 100]).into(),
+        ]));
+
+        // Bytes as map value
+        let map: IndexMap<ValueCell, ValuePointer> = [
+            (Primitive::String("data".to_owned()).into(), ValueCell::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]).into()),
+        ].into_iter().collect();
+        test_serde_cell(ValueCell::Map(Box::new(map)));
     }
 }

@@ -186,6 +186,7 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
         .into_owned()
         .to_vec()?
         .into_iter()
+        .rev()
         .map(|v| v.to_owned().into())
         .collect::<VecDeque<_>>();
 

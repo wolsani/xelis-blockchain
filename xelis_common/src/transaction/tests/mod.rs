@@ -382,7 +382,7 @@ async fn test_tx_invoke_contract() {
 
     let mut state = MockChainState::new();
     let mut module = Module::new();
-    module.add_entry_chunk(Chunk::new());
+    module.add_entry_chunk(Chunk::new(), None);
 
     state.internal_set_contract_module(
         Hash::zero(),
@@ -435,7 +435,7 @@ async fn test_tx_deploy_contract() {
         };
 
         let mut module = Module::new();
-        module.add_entry_chunk(Chunk::new());
+        module.add_entry_chunk(Chunk::new(), None);
 
         // constructor
         module.add_hook_chunk(0, Chunk::new());

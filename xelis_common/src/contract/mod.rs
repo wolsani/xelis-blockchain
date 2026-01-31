@@ -10,6 +10,7 @@ mod module;
 mod source;
 mod error;
 mod event_callback;
+mod version;
 
 #[cfg(test)]
 pub mod tests;
@@ -84,6 +85,7 @@ pub use module::*;
 pub use source::*;
 pub use error::*;
 pub use event_callback::*;
+pub use version::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -2203,6 +2205,16 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             5000,
             Some(Type::Bool)
         );
+
+        // returns the XELIS asset hash
+        env.register_native_function(
+            "get_xelis_asset",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_xelis_asset),
+            1,
+            Some(hash_type.clone())
+        );
     }
 
     env
@@ -2543,6 +2555,10 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
     record_gas_allowance(context, max_gas)?;
 
     Ok(Primitive::Boolean(true).into())
+}
+
+fn get_xelis_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(XELIS_ASSET.clone())).into()))
 }
 
 fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
