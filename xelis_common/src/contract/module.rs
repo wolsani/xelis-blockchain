@@ -116,12 +116,17 @@ impl Serializer for TypePacked {
             },
         }
 
-        let mut stack = vec![WorkItem::ReadType];
+        const MAX_DEPTH: usize = 16;
+        let mut stack = vec![(WorkItem::ReadType, 0)];
         let mut tmp = Vec::new();
 
-        while let Some(work) = stack.pop() {
+        while let Some((work, depth)) = stack.pop() {
             match work {
                 WorkItem::ReadType => {
+                    if depth > MAX_DEPTH {
+                        return Err(ReaderError::InvalidSize);
+                    }
+
                     let tag = reader.read_u8()?;
                     match tag {
                         0 => tmp.push(TypePacked::Number(NumberType::U8)),
@@ -144,25 +149,25 @@ impl Serializer for TypePacked {
                         14 => tmp.push(TypePacked::Range(Box::new(NumberType::U128))),
                         15 => tmp.push(TypePacked::Range(Box::new(NumberType::U256))),
                         16 => {
-                            stack.push(WorkItem::BuildArray);
-                            stack.push(WorkItem::ReadType);
+                            stack.push((WorkItem::BuildArray, depth));
+                            stack.push((WorkItem::ReadType, depth + 1));
                         },
                         17 => {
                             let len = reader.read_u8()? as usize;
                             if len == 0 {
                                 tmp.push(TypePacked::Tuples(Vec::new()));
                             } else {
-                                stack.push(WorkItem::BuildTuples { remaining: len, fields: Vec::with_capacity(len) });
-                                stack.push(WorkItem::ReadType);
+                                stack.push((WorkItem::BuildTuples { remaining: len, fields: Vec::with_capacity(len) }, depth));
+                                stack.push((WorkItem::ReadType, depth + 1));
                             }
                         },
                         18 => {
-                            stack.push(WorkItem::BuildMapKey);
-                            stack.push(WorkItem::ReadType);
+                            stack.push((WorkItem::BuildMapKey, depth));
+                            stack.push((WorkItem::ReadType, depth + 1));
                         },
                         19 => {
-                            stack.push(WorkItem::BuildOptional);
-                            stack.push(WorkItem::ReadType);
+                            stack.push((WorkItem::BuildOptional, depth));
+                            stack.push((WorkItem::ReadType, depth + 1));
                         },
                         20 => tmp.push(TypePacked::Any),
                         21 => {
@@ -172,20 +177,20 @@ impl Serializer for TypePacked {
                             } else {
                                 let first_variant_len = reader.read_u8()? as usize;
                                 if first_variant_len == 0 {
-                                    stack.push(WorkItem::BuildOneOf {
+                                    stack.push((WorkItem::BuildOneOf {
                                         remaining_variants: len - 1,
                                         variants: Vec::with_capacity(len),
                                         current_variant_remaining: None,
                                         current_variant: Vec::new()
-                                    });
+                                    }, depth));
                                 } else {
-                                    stack.push(WorkItem::BuildOneOf {
+                                    stack.push((WorkItem::BuildOneOf {
                                         remaining_variants: len - 1,
                                         variants: Vec::with_capacity(len),
                                         current_variant_remaining: Some(first_variant_len),
                                         current_variant: Vec::with_capacity(first_variant_len)
-                                    });
-                                    stack.push(WorkItem::ReadType);
+                                    }, depth));
+                                    stack.push((WorkItem::ReadType, depth + 1));
                                 }
                             }
                         },
@@ -201,16 +206,16 @@ impl Serializer for TypePacked {
                     fields.push(field);
                     
                     if remaining > 1 {
-                        stack.push(WorkItem::BuildTuples { remaining: remaining - 1, fields });
-                        stack.push(WorkItem::ReadType);
+                        stack.push((WorkItem::BuildTuples { remaining: remaining - 1, fields }, depth));
+                        stack.push((WorkItem::ReadType, depth + 1));
                     } else {
                         tmp.push(TypePacked::Tuples(fields));
                     }
                 },
                 WorkItem::BuildMapKey => {
                     let key = tmp.pop().ok_or(ReaderError::InvalidValue)?;
-                    stack.push(WorkItem::BuildMapValue { key });
-                    stack.push(WorkItem::ReadType);
+                    stack.push((WorkItem::BuildMapValue { key }, depth));
+                    stack.push((WorkItem::ReadType, depth + 1));
                 },
                 WorkItem::BuildMapValue { key } => {
                     let value = tmp.pop().ok_or(ReaderError::InvalidValue)?;
@@ -226,33 +231,33 @@ impl Serializer for TypePacked {
                         current_variant.push(field);
                         
                         if remaining > 1 {
-                            stack.push(WorkItem::BuildOneOf {
+                            stack.push((WorkItem::BuildOneOf {
                                 remaining_variants,
                                 variants,
                                 current_variant_remaining: Some(remaining - 1),
                                 current_variant
-                            });
-                            stack.push(WorkItem::ReadType);
+                            }, depth));
+                            stack.push((WorkItem::ReadType, depth + 1));
                         } else {
                             variants.push(current_variant);
                             
                             if remaining_variants > 0 {
                                 let next_variant_len = reader.read_u8()? as usize;
                                 if next_variant_len == 0 {
-                                    stack.push(WorkItem::BuildOneOf {
+                                    stack.push((WorkItem::BuildOneOf {
                                         remaining_variants: remaining_variants - 1,
                                         variants,
                                         current_variant_remaining: None,
                                         current_variant: Vec::new()
-                                    });
+                                    }, depth));
                                 } else {
-                                    stack.push(WorkItem::BuildOneOf {
+                                    stack.push((WorkItem::BuildOneOf {
                                         remaining_variants: remaining_variants - 1,
                                         variants,
                                         current_variant_remaining: Some(next_variant_len),
                                         current_variant: Vec::with_capacity(next_variant_len)
-                                    });
-                                    stack.push(WorkItem::ReadType);
+                                    }, depth));
+                                    stack.push((WorkItem::ReadType, depth + 1));
                                 }
                             } else {
                                 tmp.push(TypePacked::OneOf(variants));
@@ -264,20 +269,20 @@ impl Serializer for TypePacked {
                         if remaining_variants > 0 {
                             let next_variant_len = reader.read_u8()? as usize;
                             if next_variant_len == 0 {
-                                stack.push(WorkItem::BuildOneOf {
+                                stack.push((WorkItem::BuildOneOf {
                                     remaining_variants: remaining_variants - 1,
                                     variants,
                                     current_variant_remaining: None,
                                     current_variant: Vec::new()
-                                });
+                                }, depth));
                             } else {
-                                stack.push(WorkItem::BuildOneOf {
+                                stack.push((WorkItem::BuildOneOf {
                                     remaining_variants: remaining_variants - 1,
                                     variants,
                                     current_variant_remaining: Some(next_variant_len),
                                     current_variant: Vec::with_capacity(next_variant_len)
-                                });
-                                stack.push(WorkItem::ReadType);
+                                }, depth));
+                                stack.push((WorkItem::ReadType, depth + 1));
                             }
                         } else {
                             tmp.push(TypePacked::OneOf(variants));
@@ -299,6 +304,39 @@ impl Serializer for TypePacked {
 mod tests {
     use super::*;
 
+    fn roundtrip(value: TypePacked) -> TypePacked {
+        let bytes = value.to_bytes();
+        let mut reader = Reader::new(&bytes);
+        TypePacked::read(&mut reader).expect("Deserialization failed")
+    }
+
+    fn nested_array(depth: usize) -> TypePacked {
+        let mut value = TypePacked::Bool;
+        for _ in 0..depth {
+            value = TypePacked::Array(Box::new(value));
+        }
+        value
+    }
+
+    fn nested_optional(depth: usize) -> TypePacked {
+        let mut value = TypePacked::Number(NumberType::U64);
+        for _ in 0..depth {
+            value = TypePacked::Optional(Box::new(value));
+        }
+        value
+    }
+
+    fn nested_map_value(depth: usize) -> TypePacked {
+        let mut value = TypePacked::String;
+        for _ in 0..depth {
+            value = TypePacked::Map(
+                Box::new(TypePacked::Number(NumberType::U8)),
+                Box::new(value),
+            );
+        }
+        value
+    }
+
     #[test]
     fn test_complex_type_packed_serialization() {
         let original = TypePacked::OneOf(vec![
@@ -312,11 +350,104 @@ mod tests {
             vec![],
         ]);
 
-        let bytes = original.to_bytes();
-
-        let mut reader = Reader::new(&bytes);
-        let deserialized = TypePacked::read(&mut reader).expect("Deserialization failed");
+        let deserialized = roundtrip(original.clone());
 
         assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_type_packed_roundtrip_variants() {
+        let opaque = TypePacked::Opaque(42);
+        let range = TypePacked::Range(Box::new(NumberType::U128));
+        let tuples = TypePacked::Tuples(vec![
+            TypePacked::Number(NumberType::U16),
+            TypePacked::Bytes,
+            TypePacked::Optional(Box::new(TypePacked::Bool)),
+        ]);
+        let map = TypePacked::Map(
+            Box::new(TypePacked::String),
+            Box::new(TypePacked::Array(Box::new(TypePacked::Number(NumberType::U32)))),
+        );
+        let one_of = TypePacked::OneOf(vec![
+            vec![TypePacked::Any],
+            vec![TypePacked::Bool, TypePacked::String],
+        ]);
+
+        let variants = vec![
+            TypePacked::Number(NumberType::U256),
+            TypePacked::Bool,
+            TypePacked::Bytes,
+            TypePacked::String,
+            opaque,
+            range,
+            tuples,
+            map,
+            TypePacked::Optional(Box::new(TypePacked::Number(NumberType::U8))),
+            one_of,
+        ];
+
+        for original in variants {
+            let deserialized = roundtrip(original.clone());
+            assert_eq!(original, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_max_depth_limit_ok_for_variants() {
+        let values = vec![
+            nested_array(16),
+            nested_optional(16),
+            nested_map_value(16),
+        ];
+
+        for original in values {
+            let result = roundtrip(original.clone());
+            assert_eq!(original, result);
+        }
+    }
+
+    #[test]
+    fn test_max_depth_limit_exceeded_for_variants() {
+        let values = vec![
+            nested_array(17),
+            nested_optional(17),
+            nested_map_value(17),
+        ];
+
+        for original in values {
+            let bytes = original.to_bytes();
+            let mut reader = Reader::new(&bytes);
+            let result = TypePacked::read(&mut reader);
+            assert!(result.is_err(), "Depth 17 should be rejected");
+        }
+    }
+
+    #[test]
+    fn test_complex_nesting_within_limit() {
+        // Test tuple with nested arrays, accounting for the tuple adding 1 depth level
+        let complex = TypePacked::Tuples(vec![
+            nested_array(14),
+            TypePacked::Optional(Box::new(nested_array(13))),
+            TypePacked::Map(
+                Box::new(TypePacked::String),
+                Box::new(nested_optional(14)),
+            ),
+        ]);
+
+        let result = roundtrip(complex.clone());
+        assert_eq!(complex, result);
+    }
+
+    #[test]
+    fn test_oneof_with_nested_variants() {
+        // Test OneOf with variants containing nested structures
+        let one_of = TypePacked::OneOf(vec![
+            vec![nested_array(10)],
+            vec![TypePacked::String, nested_optional(10)],
+            vec![],
+        ]);
+
+        let result = roundtrip(one_of.clone());
+        assert_eq!(one_of, result);
     }
 }
