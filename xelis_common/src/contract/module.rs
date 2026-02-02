@@ -450,4 +450,25 @@ mod tests {
         let result = roundtrip(one_of.clone());
         assert_eq!(one_of, result);
     }
+
+    #[test]
+    fn test_type_packed_order_of_inner_items_is_respected() {
+        let first = TypePacked::Tuples(vec![
+            TypePacked::Number(NumberType::U8),
+            TypePacked::String,
+            TypePacked::Bool,
+        ]);
+        let second = TypePacked::Tuples(vec![
+            TypePacked::String,
+            first.clone(),
+            TypePacked::Number(NumberType::U8),
+        ]);
+
+        let first_bytes = first.to_bytes();
+        let second_bytes = second.to_bytes();
+
+        assert_ne!(first_bytes, second_bytes, "Tuple order should change serialization");
+        assert_eq!(roundtrip(first.clone()), first);
+        assert_eq!(roundtrip(second.clone()), second);
+    }
 }
