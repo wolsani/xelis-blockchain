@@ -1559,7 +1559,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
                 ("eq_commitment_proof", commitment_equality_proof_type.clone()),
                 ("range_proof", range_proof_type.clone()),
             ],
-            FunctionHandler::Sync(arbitrary_range_proof_new),
+            FunctionHandler::Sync(ownership_proof_new),
             500,
             Some(ownership_proof_type.clone())
         );
@@ -2080,7 +2080,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             vec![("key", Type::Bytes), ("value", Type::Any)],
             FunctionHandler::Async(async_handler!(btree_store_insert::<P>)),
             100,
-            Some(Type::Optional(Box::new(Type::Any)))
+            None,
         );
 
         // NOTE: "get" will only work deterministically if there are only unique keys.
@@ -2102,7 +2102,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             vec![("key", Type::Bytes)],
             FunctionHandler::Async(async_handler!(btree_store_delete::<P>)),
             75,
-            Some(Type::Optional(Box::new(Type::Any)))
+            Some(Type::Bool)
         );
         env.register_native_function(
             "seek",
@@ -2644,11 +2644,11 @@ async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
 async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
-    let contract: Hash = params.remove(0)
+    let asset: Hash = params.remove(1)
         .into_owned()
         .into_opaque_type()?;
 
-    let asset: Hash = params.remove(1)
+    let contract: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
 

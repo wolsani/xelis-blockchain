@@ -501,7 +501,7 @@ pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider>(
 
     with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
         insert_key(ctx, key, value).await?;
-        Ok(SysCallResult::Return(Primitive::Null.into()))
+        Ok(SysCallResult::None)
     })).await
 }
 
