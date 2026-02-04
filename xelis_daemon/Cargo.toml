@@ -1,6 +1,6 @@
 [package]
 name = "xelis_daemon"
-version = "1.21.2"
+version = "1.21.3"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
