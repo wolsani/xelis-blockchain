@@ -1234,7 +1234,8 @@ impl Transaction {
                         Default::default(),
                         payload.max_gas,
                         InvokeContract::Entry(payload.entry_id),
-                        Cow::Borrowed(&payload.permission)
+                        Cow::Borrowed(&payload.permission),
+                        true
                     ).await?;
                 } else {
                     warn!("Contract {} invoked from {} not available anymore", payload.contract, tx_hash);
@@ -1259,6 +1260,7 @@ impl Transaction {
                         invoke.max_gas,
                         InvokeContract::Hook(HOOK_CONSTRUCTOR_ID),
                         Cow::Owned(InterContractPermission::All),
+                        true
                     ).await?;
 
                     // if it has failed, we don't want to deploy the contract

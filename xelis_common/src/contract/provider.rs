@@ -36,7 +36,10 @@ pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
     async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // Load a contract module
-    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<ContractModule>, anyhow::Error>;
+    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ContractModule>)>, anyhow::Error>;
+
+    // Check if a contract has already a callback registered for an event at maximum topoheight
+    async fn has_contract_callback_for_event(&self, contract: &Hash, event_id: u64, listener: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
 
 // This is a wrapper around the storage to allow for the storage to be passed in the Context

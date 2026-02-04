@@ -1,6 +1,6 @@
 use blake3::hash;
 use xelis_vm::{
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -27,13 +27,17 @@ use crate::{
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
-use super::Asset;
+use super::OpaqueAsset;
 
 // Maximum size for the ticker
 pub const TICKER_LEN: usize = 8;
 
 // Verify if the asset str is valid
 fn is_valid_str_for_asset(name: &str, whitespace: bool, uppercase_only: bool) -> bool {
+    if name.len() < 2 {
+        return false
+    }
+
     if whitespace {
         if name.starts_with(" ") || name.ends_with(" ") {
             return false
@@ -56,7 +60,7 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 
 // Create a new asset
 // Return None if the asset already exists
-pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let (id, values) = params.remove(4).into_owned().to_enum()?;
@@ -158,20 +162,20 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     // If we have a fixed max supply, we need to mint it to the contract
     if let MaxSupplyMode::Fixed(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
+        get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone())
             .balances
             .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
-    state.outputs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
+    state.logs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
 
-    let asset = Asset {
+    let asset = OpaqueAsset {
         hash: asset_hash
     };
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let id = params[0].as_u64()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
@@ -184,13 +188,13 @@ pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    let asset = Asset {
+    let asset = OpaqueAsset {
         hash: asset_hash
     };
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let hash: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
@@ -201,7 +205,7 @@ pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    let asset = Asset {
+    let asset = OpaqueAsset {
         hash
     };
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))

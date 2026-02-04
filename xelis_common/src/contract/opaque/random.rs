@@ -2,7 +2,7 @@ use anyhow::Context as AnyhowContext;
 use log::debug;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
-    Context,
+    VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -34,11 +34,11 @@ fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8
         .context("filling random buffer")
 }
 
-pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     // Create a deterministic random for the contract
    let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
 
     if cache.random.is_none() {
         debug!("initializing deterministic random");
@@ -49,10 +49,10 @@ pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
 }
 
-pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
 
     let mut buffer = [0; 1];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
@@ -61,10 +61,10 @@ pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
     Ok(SysCallResult::Return(Primitive::U8(value).into()))
 }
 
-pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 2];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u16::from_le_bytes(buffer);
@@ -72,10 +72,10 @@ pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     Ok(SysCallResult::Return(Primitive::U16(value).into()))
 }
 
-pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 4];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u32::from_le_bytes(buffer);
@@ -83,10 +83,10 @@ pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     Ok(SysCallResult::Return(Primitive::U32(value).into()))
 }
 
-pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 8];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u64::from_le_bytes(buffer);
@@ -94,10 +94,10 @@ pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     Ok(SysCallResult::Return(Primitive::U64(value).into()))
 }
 
-pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 16];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u128::from_le_bytes(buffer);
@@ -105,20 +105,20 @@ pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, co
     Ok(SysCallResult::Return(Primitive::U128(value).into()))
 }
 
-pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 32];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = U256::from_le_bytes(buffer);
     Ok(SysCallResult::Return(Primitive::U256(value).into()))
 }
 
-pub fn random_bool(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn random_bool(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 1];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = buffer[0] & 1 == 1;

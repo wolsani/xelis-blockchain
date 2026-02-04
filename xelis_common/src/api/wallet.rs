@@ -1,12 +1,18 @@
 use std::{borrow::Cow, collections::HashMap};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     account::CiphertextCache,
     asset::AssetData,
     block::TopoHeight,
-    crypto::{elgamal::CompressedCiphertext, Address, Hash, PrivateKey},
+    crypto::{
+        elgamal::CompressedCiphertext,
+        Address,
+        Hash,
+        PrivateKey,
+        Signature,
+    },
     serializer::Hexable,
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
@@ -27,6 +33,18 @@ use super::{
     default_true_value,
     daemon
 };
+
+// Optional internal RPC method used by XSWD
+// To request in one time the permissions
+// example: balance, tracked assets etc is grouped into one
+// modal that propose to the user to set them in "always allow"
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+pub struct XSWDPrefetchPermissions {
+    // Description to be shown to the user
+    pub reason: Option<String>,
+    // Request these permissions in advance
+    pub permissions: IndexSet<String>,
+}
 
 // Signer ID to use for signing the transaction
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -298,6 +316,16 @@ pub struct SearchTransactionResult {
 pub struct BalanceChanged {
     pub asset: Hash,
     pub balance: u64
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct VerifySignedDataParams {
+    // Data that was signed
+    pub data: DataElement,
+    // Signature to verify
+    pub signature: Signature,
+    // Public key of the signer
+    pub address: Address,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]

@@ -671,6 +671,13 @@ pub struct GetContractDataEntriesParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetContractTransactionsParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractDataEntry {
     pub key: ValueCell,
     pub value: ValueCell,
@@ -1000,6 +1007,9 @@ pub struct RegisteredExecution<'a> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
+    // When a new topoheight is detected
+    // it contains NewTopoHeightEvent as value
+    NewTopoHeight,
     // When a new block is accepted by chain
     // it contains NewBlockEvent as value
     NewBlock,
@@ -1026,25 +1036,14 @@ pub enum NotifyEvent {
     TransactionExecuted,
     // When the contract has been invoked
     // This allows to track all the contract invocations
-    InvokeContract {
+    ContractInvoke {
         contract: Hash
     },
-    // TODO: Placeholder for retro-compatibility
-    // Remove once wallets are updated
-    ContractTransfer {
-        address: Address,
-    },
-    // When a contract has transfered any token
+    // When a contract has transfered any asset
     // to the receiver address
     // It contains ContractTransfersEvent struct as value
     ContractTransfers {
         address: Address
-    },
-    // When a contract call has failed for
-    // the given address
-    // It contains ContractCallError struct as value
-    InvokeContractError {
-        address: Address,
     },
     // When a contract fire an event
     // It contains ContractEvent struct as value
@@ -1052,10 +1051,11 @@ pub enum NotifyEvent {
         // Contract hash to track
         contract: Hash,
         // ID of the event that is fired from the contract
-        id: u64
+        // if set to None, it will track all events from the contract
+        id: Option<u64>
     },
     // When a new contract has been deployed
-    DeployContract,
+    ContractDeploy,
     // When a new asset has been registered
     // It contains NewAssetEvent struct as value
     NewAsset,
@@ -1077,6 +1077,12 @@ pub enum NotifyEvent {
     PeerPeerDisconnected,
     // A new block template has been created
     NewBlockTemplate,
+}
+
+// Value of NotifyEvent::NewTopoHeight
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct NewTopoHeightEvent {
+    pub new_topoheight: TopoHeight,
 }
 
 // Value of NotifyEvent::NewBlock
@@ -1190,6 +1196,9 @@ pub struct ContractEvent<'a> {
     pub topoheight: TopoHeight,
     // which block is the TX executor
     pub block_hash: Cow<'a, Hash>,
+    // the actual event_id fired
+    pub event_id: u64,
+    // event data
     pub data: Cow<'a, ValueCell>
 }
 
@@ -1226,12 +1235,12 @@ pub struct InvokeContractEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
-    pub contract_outputs: Vec<RPCContractLog<'a>>
+    pub contract_logs: Vec<RPCContractLog<'a>>
 }
 
-// Value of NotifyEvent::NewContract
+// Value of NotifyEvent::DeployContract
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct NewContractEvent<'a> {
+pub struct ContractDeployEvent<'a> {
     pub contract: Cow<'a, Hash>,
     pub block_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,

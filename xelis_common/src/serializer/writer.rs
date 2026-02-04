@@ -1,16 +1,34 @@
-use crate::crypto::Hash;
+use crate::{context::Context, crypto::Hash};
 
 pub struct Writer<'a> {
     bytes: &'a mut Vec<u8>,
     len: usize,
+    context: Context,
 }
 
 impl<'a> Writer<'a> {
     pub fn new(bytes: &'a mut Vec<u8>) -> Self {
         Self {
             len: bytes.len(),
-            bytes
+            bytes,
+            context: Context::new(),
         }
+    }
+
+    pub fn with_context(bytes: &'a mut Vec<u8>, context: Context) -> Self {
+        Self {
+            len: bytes.len(),
+            bytes,
+            context,
+        }
+    }
+
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    pub fn context_mut(&mut self) -> &mut Context {
+        &mut self.context
     }
 
     pub fn write_bytes(&mut self, bytes: &[u8]) {

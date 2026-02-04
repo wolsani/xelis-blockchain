@@ -9,10 +9,8 @@ use crate::{
     contract::{
         vm::ContractCaller,
         ExecutionsChanges,
-        AssetChanges,
+        ChainStateChanges,
         ChainState,
-        ContractCache,
-        ContractEventTracker,
         ContractLog,
         ContractProvider,
         InterContractPermission,
@@ -171,17 +169,14 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
     /// Even if the execution failed, the caches should be updated
     async fn set_modules_cache(
         &mut self,
-        modules: HashMap<Hash, Option<ContractModule>>,
+        modules: HashMap<Hash, Option<(VersionedState, Option<ContractModule>)>>,
     ) -> Result<(), E>;
 
     /// Merge the contract cache with the stored one
     async fn merge_contract_changes(
         &mut self,
-        caches: HashMap<Hash, ContractCache>,
-        tracker: ContractEventTracker,
-        assets: HashMap<Hash, Option<AssetChanges>>,
+        changes: ChainStateChanges,
         executions_changes: ExecutionsChanges,
-        extra_gas_fee: u64,
     ) -> Result<(), E>;
 
     /// Retrieve the contract balance used to pay gas
@@ -196,6 +191,13 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
     async fn remove_contract_module(
         &mut self,
         hash: &'a Hash
+    ) -> Result<(), E>;
+
+    /// Post contract execution hook
+    async fn post_contract_execution(
+        &mut self,
+        caller: &ContractCaller<'a>,
+        contract: &Hash,
     ) -> Result<(), E>;
 }
 

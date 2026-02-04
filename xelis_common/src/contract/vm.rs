@@ -54,7 +54,11 @@ pub enum ContractCaller<'a> {
     // Scheduled is formed from hash(contract, topoheight)
     // to simulate a TX hash for logs and tracking
     // Second hash is the contract hash
-    Scheduled(Cow<'a, Hash>, Cow<'a, Hash>)
+    Scheduled(Cow<'a, Hash>, Cow<'a, Hash>),
+    // actual caller that initiated these events, contract from which the event is
+    EventCallback(Cow<'a, Hash>, Cow<'a, Hash>),
+    // Invoked by the system (no specific caller)
+    System,
 }
 
 impl<'a> ContractCaller<'a> {
@@ -62,6 +66,8 @@ impl<'a> ContractCaller<'a> {
         match self {
             Self::Transaction(hash, _) => Cow::Borrowed(hash),
             Self::Scheduled(hash, _) => hash.clone(),
+            Self::EventCallback(hash, _) => hash.clone(),
+            Self::System => Cow::Owned(Hash::zero()),
         }
     }
 }
@@ -126,10 +132,11 @@ impl ExecutionResult {
 pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     contract_environment: ContractEnvironment<'a, P>,
     chain_state: &mut ChainState<'a>,
+    caller: &ContractCaller<'a>,
     invoke: InvokeContract,
     contract: Cow<'a, Hash>,
     deposits: IndexMap<Hash, ContractDeposit>,
-    parameters: impl DoubleEndedIterator<Item = ValueCell>,
+    parameters: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
     max_gas: u64,
 ) -> Result<(u64, u64, ExitValue), VMError> {
     debug!("run virtual machine with max gas {}", max_gas);
@@ -152,10 +159,10 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     // This is the first chunk to be called
     match invoke {
         InvokeContract::Entry(entry) => {
-            vm.invoke_entry_chunk(entry)?;
+            vm.invoke_chunk_with_args(entry, parameters)?;
         },
         InvokeContract::Hook(hook) => {
-            if !vm.invoke_hook_id(hook)? {
+            if !vm.invoke_hook_id_with_args(hook, parameters)? {
                 warn!("Invoke contract {} hook {} not found", contract, hook);
                 return Ok((0, max_gas, ExitValue::Error(ExitError::UnknownHook)))
             }
@@ -166,15 +173,9 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
                 return Ok((0, max_gas, ExitValue::Error(ExitError::InvalidEntry)))
             }
 
-            vm.invoke_chunk_id(chunk as usize)?;
+            vm.invoke_chunk_with_args(chunk, parameters)?;
             chain_state.executions.allow_executions = allow_executions;
         }
-    }
-
-    // We need to push it in reverse order because the VM will pop them in reverse order
-    for constant in parameters.rev() {
-        trace!("Pushing constant: {}", constant);
-        vm.push_stack(constant)?;
     }
 
     let debug_mode = chain_state.debug_mode;
@@ -210,7 +211,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
                 Level::Debug
             };
 
-            log!(level, "Invoke contract {} result: {:#}", contract, res);
+            log!(level, "Invoke contract {} from {} result: {:#}", contract, caller.get_hash(), res);
             // If the result return 0 as exit code, it means that everything went well
             let exit_code = match res.as_u64().ok() {
                 Some(v) => ExitValue::ExitCode(v),
@@ -244,7 +245,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
             exit_code
         },
         Err(err) => {
-            log!(error_level, "Invoke contract {} error: {:#}", contract, err);
+            log!(error_level, "Invoke contract {} from {} error: {:#}", contract, caller.get_hash(), err);
             ExitValue::Error(err.into())
         }
     };
@@ -266,11 +267,12 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     contract: Cow<'a, Hash>,
     // TODO: rework it
     deposits: Option<(&'a IndexMap<Hash, ContractDeposit>, &HashMap<&Hash, DecompressedDepositCt>)>,
-    parameters: impl DoubleEndedIterator<Item = ValueCell>,
+    parameters: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
     gas_sources: IndexMap<Source, u64>,
     max_gas: u64,
     invoke: InvokeContract,
     permission: Cow<'a, InterContractPermission>,
+    post_execution: bool,
 ) -> Result<ExecutionResult, ContractError<E>> {
     debug!("Invoking contract {}: {:?}", contract, invoke);
     // Deposits are actually added to each balance
@@ -281,8 +283,9 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     let (mut used_gas, vm_max_gas, exit_value) = run_virtual_machine(
         contract_environment,
         &mut chain_state,
+        &caller,
         invoke,
-        contract,
+        contract.clone(),
         deposits.map(|(d, _)| d.clone()).unwrap_or_default(),
         parameters,
         max_gas
@@ -290,10 +293,10 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
     let is_success = exit_value.is_success();
     // If the contract execution was successful, we need to merge the cache
-    let mut outputs = chain_state.outputs;
+    let mut logs = chain_state.logs;
 
     let gas_injections = chain_state.injected_gas;
-    let modules = chain_state.modules;
+    let modules = chain_state.loaded_modules;
 
     // On success: it is well allocated to either burned coins or scheduled execution
     // On failure: it is included in the gas refund
@@ -320,26 +323,19 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
     // In case of success, used_gas <= vm_max_gas
     if is_success {
-        let mut caches = chain_state.caches;
+        let mut changes = chain_state.changes;
 
-        let tracker = chain_state.tracker;
-        let assets = chain_state.assets;
         let executions = chain_state.executions.changes;
-
-        let gas_fee = chain_state.gas_fee;
 
         // Some contract have injected gas to users
         if vm_max_gas > max_gas && !gas_injections.is_empty() {
             // Refund only based on the extra max gas
-            refund_extra_gas_injections(state, gas_injections, max_gas, vm_max_gas, &mut outputs, &mut caches).await?;
+            refund_extra_gas_injections(state, gas_injections, max_gas, vm_max_gas, &mut logs, &mut changes.caches).await?;
         }
 
         state.merge_contract_changes(
-            caches,
-            tracker,
-            assets,
+            changes,
             executions,
-            gas_fee,
         ).await
             .map_err(ContractError::State)?;
 
@@ -350,9 +346,15 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
             debug!("After refunding gas sources, used gas: {}, refund gas: {}, set refund to 0", used_gas, refund_gas);
             refund_gas = 0;
         }
+
+        // Post contract execution hook
+        if post_execution {
+            state.post_contract_execution(&caller, contract.as_ref()).await
+                .map_err(ContractError::State)?;
+        }
     } else {
         // Otherwise, something was wrong, we delete the outputs made by the contract
-        outputs.clear();
+        logs.clear();
 
         if !gas_sources.is_empty() {
             refund_gas_sources(state, gas_sources, used_gas, max_gas).await?;
@@ -371,7 +373,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
                 .ok_or(ContractError::GasOverflow)?;
 
             // We consume only what was used above the original max gas
-            charge_gas_injections(state, gas_injections, extra_used_gas, &mut outputs).await?;
+            charge_gas_injections(state, gas_injections, extra_used_gas, &mut logs).await?;
             refund_gas = 0;
         }
 
@@ -382,13 +384,13 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
                     debug!("refunding deposits for transaction {}", hash);
                     refund_deposits(tx.get_source(), state, deposits, decompressed_deposits).await?;
                 },
-                ContractCaller::Scheduled(_, _) => {
+                _ => {
                     warn!("we have some deposits to refund but no TX is linked to it! These deposits are now lost in the void");
                 }
             }
 
             // It was not successful, we need to refund the deposits
-            outputs.push(ContractLog::RefundDeposits);
+            logs.push(ContractLog::RefundDeposits);
         }
     }
 
@@ -400,19 +402,19 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     debug!("used gas: {}, refund gas: {}, burned gas: {}, gas fee: {}", used_gas, refund_gas, burned_gas, fee_gas);
 
     if refund_gas > 0 {
-        outputs.push(ContractLog::RefundGas { amount: refund_gas });
+        logs.push(ContractLog::RefundGas { amount: refund_gas });
     }
 
     // Push the exit value to the outputs
     match exit_value.clone() {
         ExitValue::ExitCode(code) => {
             debug!("Contract exited with code {}", code);
-            outputs.push(ContractLog::ExitCode(Some(code)));
+            logs.push(ContractLog::ExitCode(Some(code)));
         },
         ExitValue::Payload(payload) => {
             debug!("Contract exited with payload");
 
-            outputs.extend([
+            logs.extend([
                 ContractLog::ExitPayload(payload),
                 ContractLog::ExitCode(Some(0))
             ]);
@@ -420,7 +422,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         ExitValue::Error(err) => {
             debug!("Contract exited with error: {}", err);
 
-            outputs.extend([
+            logs.extend([
                 ContractLog::ExitError(err),
                 ContractLog::ExitCode(None)
             ]);
@@ -428,7 +430,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     };
 
     // Track the outputs
-    state.set_contract_logs(caller, outputs).await
+    state.set_contract_logs(caller, logs).await
         .map_err(ContractError::State)?;
 
     Ok(ExecutionResult {

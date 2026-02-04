@@ -241,8 +241,6 @@ pub struct QueryResult {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
 
     #[test]
@@ -296,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_query_element() {
-        let mut fields = HashMap::new();
+        let mut fields = IndexMap::new();
         fields.insert(DataValue::String("owner".to_string()), DataElement::Value(DataValue::String("Slixe".to_string())));
         fields.insert(DataValue::String("balance".to_string()), DataElement::Value(DataValue::U8(25)));
 
@@ -350,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_query_and() {
-        let mut fields = HashMap::new();
+        let mut fields = IndexMap::new();
         fields.insert(DataValue::String("owner".to_string()), DataElement::Value(DataValue::String("Slixe".to_string())));
         fields.insert(DataValue::String("balance".to_string()), DataElement::Value(DataValue::U8(25)));
 
@@ -383,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_query_or() {
-        let mut fields = HashMap::new();
+        let mut fields = IndexMap::new();
         fields.insert(DataValue::String("owner".to_string()), DataElement::Value(DataValue::String("Slixe".to_string())));
         fields.insert(DataValue::String("balance".to_string()), DataElement::Value(DataValue::U8(25)));
 

@@ -533,6 +533,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         CommandHandler::Async(async_handler!(list_tracked_assets))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
+        "list_untracked_assets",
+        "List all assets marked as untracked",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(list_untracked_assets))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
         "track_asset",
         "Mark an asset hash as tracked",
         vec![Arg::new("asset", ArgType::Hash)],
@@ -907,15 +913,24 @@ async fn set_asset_name(manager: &CommandManager, mut args: ArgumentManager) -> 
     Ok(())
 }
 
-async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
-    let context = manager.get_context().lock()?;
-    let wallet: &Arc<Wallet> = context.get()?;
-
+fn get_page(args: &mut ArgumentManager) -> Result<usize, CommandError> {
     let page = if args.has_argument("page") {
         args.get_value("page")?.to_number()? as usize
     } else {
-        0
+        1
     };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
+    Ok(page)
+}
+
+async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let page = get_page(&mut args)?;
 
     let storage = wallet.get_storage().read().await;
     let count = storage.get_assets_count()?;
@@ -931,11 +946,11 @@ async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Res
     }
 
     if page > max_pages {
-        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
     }
 
-    manager.message(format!("Assets (page {}/{}):", page, max_pages));
-    for res in storage.get_assets_with_data().await?.skip(page * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+    manager.message(format!("Assets (total {}) page {}/{}:", count, page, max_pages));
+    for res in storage.get_assets_with_data().await?.skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
         let (asset, data) = res?;
         manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
     }
@@ -947,11 +962,7 @@ async fn list_balances(manager: &CommandManager, mut args: ArgumentManager) -> R
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
-    let page = if args.has_argument("page") {
-        args.get_value("page")?.to_number()? as usize
-    } else {
-        0
-    };
+    let page = get_page(&mut args)?;
 
     let storage = wallet.get_storage().read().await;
     let count = storage.get_tracked_assets_count()?;
@@ -967,11 +978,11 @@ async fn list_balances(manager: &CommandManager, mut args: ArgumentManager) -> R
     }
 
     if page > max_pages {
-        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
     }
 
-    manager.message(format!("Balances (page {}/{}):", page, max_pages));
-    for res in storage.get_tracked_assets()?.skip(page * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+    manager.message(format!("Balances (total {}) page {}/{}:", count, page, max_pages));
+    for res in storage.get_tracked_assets()?.skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
         let asset = res?;
         if let Some(data) = storage.get_optional_asset(&asset).await? {
             let balance = storage.get_plaintext_balance_for(&asset).await?;
@@ -989,11 +1000,7 @@ async fn list_tracked_assets(manager: &CommandManager, mut args: ArgumentManager
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
-    let page = if args.has_argument("page") {
-        args.get_value("page")?.to_number()? as usize
-    } else {
-        0
-    };
+    let page = get_page(&mut args)?;
 
     let storage = wallet.get_storage().read().await;
 
@@ -1009,11 +1016,47 @@ async fn list_tracked_assets(manager: &CommandManager, mut args: ArgumentManager
     }
 
     if page > max_pages {
-        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
     }
 
-    manager.message(format!("Assets (page {}/{}):", page, max_pages));
-    for res in storage.get_tracked_assets()?.skip(page * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+    manager.message(format!("Tracked Assets (total {}) page {}/{}:", count, page, max_pages));
+    for res in storage.get_tracked_assets()?.skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+        let asset = res?;
+        if let Some(data) = storage.get_optional_asset(&asset).await? {
+            manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
+        } else {
+            manager.message(format!("No asset data for {}", asset));
+        }
+    }
+
+    Ok(())
+}
+
+async fn list_untracked_assets(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let page = get_page(&mut args)?;
+
+    let storage = wallet.get_storage().read().await;
+
+    let count = storage.get_untracked_assets_count()?;
+    if count == 0 {
+        manager.message("No untracked assets found");
+        return Ok(())
+    }
+
+    let mut max_pages = count / ELEMENTS_PER_PAGE;
+    if count % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
+    }
+
+    manager.message(format!("Untracked Assets (total {}) page {}/{}:", count, page, max_pages));
+    for res in storage.get_untracked_assets()?.skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
         let asset = res?;
         if let Some(data) = storage.get_optional_asset(&asset).await? {
             manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
@@ -1552,15 +1595,7 @@ async fn balance_ct(manager: &CommandManager, mut arguments: ArgumentManager) ->
 
 // Show all transactions
 async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let page = if arguments.has_argument("page") {
-        arguments.get_value("page")?.to_number()? as usize
-    } else {
-        1
-    };
-
-    if page == 0 {
-        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
-    }
+    let page = get_page(&mut arguments)?;
 
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
@@ -1774,9 +1809,9 @@ async fn status(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comm
     #[cfg(feature = "network_handler")]
     if let Some(network_handler) = wallet.get_network_handler().lock().await.as_ref() {
         let api = network_handler.get_api();
-        let is_online = api.get_client().is_online();
+        let is_online = api.client().is_online();
         manager.message(format!("Network handler is online: {}", is_online));
-        manager.message(format!("Connected to: {}", api.get_client().get_target()));
+        manager.message(format!("Connected to: {}", api.client().get_target()));
 
         if is_online {
             let info = api.get_info().await

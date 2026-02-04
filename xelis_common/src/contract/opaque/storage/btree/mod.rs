@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context as _;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -123,7 +123,7 @@ struct StorageUsage {
 }
 
 impl StorageUsage {
-    fn charge<'ty, 'r>(self, context: &mut Context<'ty, 'r>) -> Result<(), EnvironmentError> {
+    fn charge<'ty, 'r>(self, context: &mut VMContext<'ty, 'r>) -> Result<(), EnvironmentError> {
         let read_cost = self.read_bytes.checked_mul(GAS_PER_BYTE_READ)
             .ok_or(EnvironmentError::GasOverflow)?;
         let write_cost = self.written_bytes.checked_mul(GAS_PER_BYTE_WRITE)
@@ -181,7 +181,7 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
 
     #[inline]
     fn cached_value<'a>(&'a mut self, key: &ValueCell) -> Option<&'a ValueCell> {
-        let cache = get_cache_for_contract(&mut self.state.caches, self.state.global_caches, self.contract.clone());
+        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone());
         cache
             .storage
             .get(key)
@@ -192,13 +192,13 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
     /// regardless of whether it is a valid value or a tombstone (deleted).
     #[inline]
     fn cache_has_entry(&mut self, key: &ValueCell) -> bool {
-        let cache = get_cache_for_contract(&mut self.state.caches, self.state.global_caches, self.contract.clone());
+        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone());
         cache.storage.contains_key(key)
     }
 
     #[inline]
     fn cache_insert_entry(&mut self, key: ValueCell, entry: Option<(VersionedState, Option<ValueCell>)>) {
-        let cache = get_cache_for_contract(&mut self.state.caches, self.state.global_caches, self.contract.clone());
+        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone());
         cache.storage.insert(key, entry);
     }
 }
@@ -207,7 +207,7 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
 async fn with_store_ctx<'a, 'ty, 'r, P: ContractProvider, F>(
     instance: FnInstance<'a>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
     f: F,
 ) -> FnReturnType<ContractMetadata>
 where
@@ -226,7 +226,7 @@ where
 // Helper function for mutable cursor operations
 async fn with_cursor_ctx_mut<'a, 'ty, 'r, P: ContractProvider, F>(
     instance: FnInstance<'a>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
     f: F,
 ) -> FnReturnType<ContractMetadata>
 where
@@ -475,7 +475,7 @@ async fn rotate_right<'ty, P: ContractProvider>(
 
 /* ------------------------ end Treap helpers ------------------------- */
 
-pub fn btree_store_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context)
+pub fn btree_store_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext)
 -> FnReturnType<ContractMetadata> {
     let namespace = read_bytes(params.remove(0).into_owned(), "namespace")?;
     if namespace.len() > MAX_NAMESPACE_SIZE {
@@ -492,7 +492,7 @@ pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     mut params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let value = params.remove(1).into_owned();
     ensure_value_constraints(&value)?;
@@ -501,7 +501,7 @@ pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider>(
 
     with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
         insert_key(ctx, key, value).await?;
-        Ok(SysCallResult::Return(Primitive::Null.into()))
+        Ok(SysCallResult::None)
     })).await
 }
 
@@ -510,7 +510,7 @@ pub async fn btree_store_get<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     mut params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let key = read_key_bytes(params.remove(0).into_owned())?;
     with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
@@ -523,7 +523,7 @@ pub async fn btree_store_delete<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     mut params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let key = read_key_bytes(params.remove(0).into_owned())?;
     with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
@@ -535,7 +535,7 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let ascending = params[2]
         .as_bool()?;
@@ -576,7 +576,7 @@ pub async fn btree_store_len<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     _: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
         Ok(SysCallResult::Return(Primitive::U64(read_size(ctx).await?).into()))
@@ -587,7 +587,7 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     _: FnParams,
     _: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>| Box::pin(async move {
         if cursor.skip_next_step {
@@ -630,7 +630,7 @@ pub async fn btree_cursor_delete<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     _: FnParams,
     _: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>| Box::pin(async move {
         Ok(SysCallResult::Return(Primitive::Boolean(delete_at_cursor(cursor, ctx).await?).into()))
@@ -1155,7 +1155,7 @@ async fn write_storage_value<'ty, P: ContractProvider>(
     let size = data_size_in_bytes(&key) + value.as_ref().map_or(0, |v| data_size_in_bytes(v));
     ctx.charge_write(size)?;
 
-    let cache = get_cache_for_contract(&mut ctx.state.caches, ctx.state.global_caches, ctx.contract.clone());
+    let cache = get_cache_for_contract(&mut ctx.state.changes.caches, ctx.state.global_caches, ctx.contract.clone());
     Ok(match cache.storage.entry(key.clone()) {
         Entry::Occupied(mut occ) => {
             let slot = occ.get_mut();

@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
@@ -104,7 +103,7 @@ pub enum DataElement {
     // For two next variants, we support up to 255 (u8::MAX) elements maximum
     Array(Vec<DataElement>),
     // Key-Value map with key as DataValue and value as DataElement
-    Fields(HashMap<DataValue, DataElement>),
+    Fields(IndexMap<DataValue, DataElement>),
 }
 
 impl DataElement {
@@ -160,7 +159,7 @@ impl DataElement {
         }
     }
 
-    pub fn to_map(self) -> Result<HashMap<DataValue, DataElement>, DataConversionError> {
+    pub fn to_map(self) -> Result<IndexMap<DataValue, DataElement>, DataConversionError> {
         match self {
             Self::Fields(v) => Ok(v),
             _ => Err(DataConversionError::ExpectedMap)
@@ -181,7 +180,7 @@ impl DataElement {
         }
     }
 
-    pub fn as_map(&self) -> Result<&HashMap<DataValue, DataElement>, DataConversionError> {
+    pub fn as_map(&self) -> Result<&IndexMap<DataValue, DataElement>, DataConversionError> {
         match self {
             Self::Fields(v) => Ok(v),
             _ => Err(DataConversionError::ExpectedMap)
@@ -206,7 +205,7 @@ impl Serializer for DataElement {
             },
             2 => {
                 let size = reader.read_u8()?;
-                let mut fields = HashMap::new();
+                let mut fields = IndexMap::new();
                 for _ in 0..size {
                     let key = DataValue::read(reader)?;
                     let value = DataElement::read(reader)?;

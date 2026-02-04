@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -23,6 +23,7 @@ use crate::{
         FEE_PER_BYTE_IN_CONTRACT_MEMORY,
         FEE_PER_BYTE_STORED_CONTRACT,
         TX_GAS_BURN_PERCENT,
+        MAX_GAS_USAGE_PER_TX,
         XELIS_ASSET
     },
     contract::{
@@ -148,7 +149,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     _: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>
+    context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
@@ -177,6 +178,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     let p = params[1].as_ref().as_vec()?;
     let max_gas = params[2].as_u64()?;
     let use_contract_balance = params[3].as_bool()?;
+
+    if max_gas > MAX_GAS_USAGE_PER_TX {
+        return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
+    }
 
     if p.len() > (u8::MAX - 1) as usize {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
@@ -209,8 +214,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
             ContractCaller::Transaction(_, tx) => {
                 Source::Account(tx.get_source().clone())
             },
-            ContractCaller::Scheduled(_, _) => {
-                return Err(EnvironmentError::Static("cannot pay from caller scheduled execution")).into();
+            _ => {
+                return Err(EnvironmentError::Static("cannot pay from non transaction call")).into();
             }
         };
 
@@ -247,7 +252,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    state.outputs.push(ContractLog::ScheduledExecution {
+    state.logs.push(ContractLog::ScheduledExecution {
         contract: metadata.metadata.contract_executor.clone(),
         hash: hash.clone(),
         kind: match kind {
@@ -264,7 +269,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
         // add the part for the miners
         let fee_part = total_cost - burned_part;
-        state.gas_fee += fee_part;
+        state.changes.extra_gas_fee = fee_part.checked_add(state.changes.extra_gas_fee)
+            .ok_or(EnvironmentError::GasOverflow)?;
 
         record_balance_charge(
             provider,
@@ -285,7 +291,7 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let topoheight = params[4].as_u64()?;
     schedule_execution::<P>(ScheduledExecutionKind::TopoHeight(topoheight), instance, params, metadata, context).await
@@ -295,12 +301,12 @@ pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvid
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     schedule_execution::<P>(ScheduledExecutionKind::BlockEnd, instance, params, metadata, context).await
 }
 
-pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
         .as_ref()
@@ -309,7 +315,7 @@ pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &M
     Ok(SysCallResult::Return(scheduled_execution.hash.clone().into()))
 }
 
-pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
         .as_ref()
@@ -325,7 +331,7 @@ pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
     instance: FnInstance<'a>,
     _: FnParams,
     _: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
@@ -343,7 +349,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
     _: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
@@ -373,7 +379,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
-    context: &mut Context<'ty, 'r>,
+    context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let amount = params[0].as_u64()?;
     let use_contract_balance = params[1].as_bool()?;
@@ -422,8 +428,8 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
             ContractCaller::Transaction(_, tx) => {
                 Source::Account(tx.get_source().clone())
             },
-            ContractCaller::Scheduled(_, _) => {
-                return Err(EnvironmentError::Static("cannot pay from caller scheduled execution")).into();
+            _ => {
+                return Err(EnvironmentError::Static("cannot pay from non transaction caller")).into();
             }
         };
 
@@ -440,6 +446,10 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
     // Total max gas allocated to this execution
     execution.max_gas = execution.max_gas.checked_add(amount)
         .ok_or(EnvironmentError::GasOverflow)?;
+
+    if execution.max_gas > MAX_GAS_USAGE_PER_TX {
+        return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
+    }
 
     if execution.gas_sources.len() >= u16::MAX as usize && !execution.gas_sources.contains_key(&source) {
         return Err(EnvironmentError::Static("too many gas injection sources")).into();

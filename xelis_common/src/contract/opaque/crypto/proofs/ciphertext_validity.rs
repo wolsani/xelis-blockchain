@@ -3,7 +3,7 @@ use std::hash::Hasher;
 use xelis_vm::{
     impl_opaque,
     traits::{DynEq, DynHash, Serializable},
-    Context,
+    VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -56,7 +56,7 @@ impl Serializable for CiphertextValidityProof {
     }
 }
 
-pub fn ciphertext_validity_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn ciphertext_validity_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let commitment = PedersenCommitment::from_point(
         params[0]
             .as_mut()

@@ -222,6 +222,15 @@ impl Transaction {
         }.max(self.source_commitments.len())
     }
 
+    // If the transaction is an InvokeContract, return the contract hash
+    #[inline]
+    pub fn invoked_contract(&self) -> Option<&Hash> {
+        match &self.data {
+            TransactionType::InvokeContract(payload) => Some(&payload.contract),
+            _ => None
+        }
+    }
+
     // Consume the transaction by returning the source public key and the transaction type
     #[inline(always)]
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {

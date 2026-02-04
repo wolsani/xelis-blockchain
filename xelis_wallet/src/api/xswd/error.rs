@@ -1,7 +1,7 @@
 use thiserror::Error;
 use xelis_common::rpc::InternalRpcError;
 
-#[derive(Error, Debug, Clone, Copy)]
+#[derive(Error, Debug, Clone)]
 pub enum XSWDError {
     #[error("semaphore error")]
     SemaphoreError,
@@ -29,8 +29,8 @@ pub enum XSWDError {
     InvalidOrigin,
     #[error("Too many permissions")]
     TooManyPermissions,
-    #[error("Unknown method requested in permissions list")]
-    UnknownMethodInPermissionsList,
+    #[error("Unknown method requested in permissions list: {0}")]
+    UnknownMethodInPermissionsList(String),
     #[error("Application permissions are not signed")]
     ApplicationPermissionsNotSigned,
     #[error("Invalid signature for application data")]

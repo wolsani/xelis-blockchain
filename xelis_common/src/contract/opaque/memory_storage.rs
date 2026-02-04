@@ -1,6 +1,6 @@
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
-    Context,
+    VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -32,7 +32,7 @@ impl Serializable for OpaqueMemoryStorage {}
 
 impl JSONHelper for OpaqueMemoryStorage {}
 
-pub fn memory_storage(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let shared = params[0]
         .as_ref()
         .as_bool()?;
@@ -42,14 +42,14 @@ pub fn memory_storage(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _
     })).into()))
 }
 
-pub fn is_shared(instance: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn is_shared(instance: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
     Ok(SysCallResult::Return(Primitive::Boolean(storage.shared).into()))
 }
 
-pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
@@ -58,7 +58,7 @@ pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params
     let key = params.remove(0)
         .into_owned();
 
-    let value = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.metadata.contract_executor)
+    let value = get_optional_cache_for_contract(&state.changes.caches, state.global_caches, &metadata.metadata.contract_executor)
         .and_then(|cache| if storage.shared {
                 &cache.memory_shared
             } else {
@@ -69,7 +69,7 @@ pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
@@ -78,7 +78,7 @@ pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params:
     let key = params.remove(0)
         .into_owned();
 
-    let contains = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.metadata.contract_executor)
+    let contains = get_optional_cache_for_contract(&state.changes.caches, state.global_caches, &metadata.metadata.contract_executor)
         .map_or(false, |cache| if storage.shared {
                 &cache.memory_shared
             } else {
@@ -89,7 +89,7 @@ pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params:
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
@@ -105,7 +105,7 @@ pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut param
 
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let memory = if storage.shared {
         &mut cache.memory_shared
     } else {
@@ -118,7 +118,7 @@ pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut param
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
@@ -127,7 +127,7 @@ pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut para
     let key = params.remove(0)
         .into_owned();
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let memory = if storage.shared {
         &mut cache.memory_shared
     } else {

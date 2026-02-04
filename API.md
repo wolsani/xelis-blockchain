@@ -75,6 +75,23 @@ When a new block has been accepted and included in the chain by the daemon.
 }
 ```
 
+#### New TopoHeight
+
+When a new topoheight has been detected by the daemon.
+
+##### Name `new_topo_height`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "new_topoheight": 107219
+    }
+}
+```
+
 #### Block Ordered
 
 When a block has been ordered and executed by the DAG order.
@@ -103,7 +120,15 @@ When a block was previously executed in the DAG but due to DAG reorg, got rewind
 
 ##### On Event
 ```json
-
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_hash": "e42555732f8ca3a55bf97cbb8d63c73c0e8db8b376f60f4794871d468ffe83fc",
+        "event": "block_orphaned",
+        "old_topoheight": 641917
+    }
+}
 ```
 
 #### Stable Height Changed
@@ -122,6 +147,25 @@ This means no new blocks can be added at this height or below.
         "event": "stable_height_changed",
         "new_stable_height": 611815,
         "previous_stable_height": 611814
+    }
+}
+```
+
+#### Stable TopoHeight Changed
+
+When the DAG found a new stable topoheight.
+
+##### Name `stable_topoheight_changed`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "stable_topoheight_changed",
+        "new_stable_topoheight": 611815,
+        "previous_stable_topoheight": 611814
     }
 }
 ```
@@ -234,6 +278,128 @@ When a transaction has been executed by the DAG order.
         "event": "transaction_executed",
         "topoheight": 641928,
         "tx_hash": "591e28f8e03e234804fe51f6beef3553698f31015288f93a088f42430bbc0130"
+    }
+}
+```
+
+#### Invoke Contract
+
+When the contract has been invoked and executed by the DAG order.
+
+##### Name `invoke_contract`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "invoke_contract",
+        "tx_hash": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+        "contract_logs": [...]
+    }
+}
+```
+
+#### Contract Transfers
+
+When a contract has transfered any asset to the receiver address, it is aggregated.
+
+##### Name `contract_transfers`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "contract_transfers",
+        "executions": [
+            {
+                "key": {
+                    "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+                    "caller": "4951a4d10b8921c8e08d3c380993305a1e4706cbba606e2e79ffdfc06c54eb5f"
+                },
+                "value": {
+                    "transfers": {
+                        "0000000000000000000000000000000000000000000000000000000000000000": 1000
+                    }
+                }
+            }
+        ],
+        "block_timestamp": 1723503200,
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+        "contract_logs": [...]
+    }
+}
+```
+
+#### Contract Event
+
+When a contract fire an event.
+
+##### Name `contract_event`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "contract_event",
+        "event_id": 42,
+        "data": {
+            "type": "primitive",
+            "value": {
+                "type": "string",
+                "value": "Hello World!"
+            }
+        },
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+    }
+}
+```
+
+#### Contract Deploy
+
+When a contract has been deployed.
+
+##### Name `contract_deploy`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "contract_deploy",
+        "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
+    }
+}
+```
+
+#### New Asset
+
+When a new asset has been registered.
+
+##### Name `new_asset`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "new_asset",
+        "asset": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+        "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
+        "topoheight": 642000,
     }
 }
 ```
@@ -373,6 +539,72 @@ When a peer's peer has disconnected from him and notified us.
         "peer_addr": "1.1.1.1:2125",
         "peer_id": 7542674138406502028
     }
+}
+```
+
+### JSON-RPC (Private) Methods
+These methods must be enabled by starting the daemon with `--rpc-allow-private-methods` flag.
+
+#### Rewind Chain
+Rewind the chain by a specific count of blocks.
+
+##### Method `rewind_chain`
+
+##### Parameters
+|        Name        |   Type  | Required |                         Note                        |
+|:------------------:|:-------:|:--------:|:---------------------------------------------------:|
+|        count       | Integer | Required |                Count of blocks to pop               |
+|until_stable_height | Boolean | Optional |Rewind max to stable height if possible. Default false|
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "rewind_chain",
+    "params": {
+        "address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
+        "allow_integrated": false
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "topoheight": 18,
+        "txs": ["011a3af694cf821e39e694baf533f4cb323785519a593e952a3e43e59250d4ea"]
+    }
+}
+```
+
+
+#### Clear Caches
+Clear the current caches used by the daemon.
+
+##### Method `clear_caches`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "clear_caches",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": null
 }
 ```
 
@@ -2960,6 +3192,40 @@ It contains, the refunded gas amount, exit code and transfers.
                 "amount": 99593
             }
         }
+    ]
+}
+```
+
+#### Get Contract Transactions
+Retrieve all transaction hashes that have interacted with the requested contract.
+
+##### Method `get_contract_transactions`
+
+##### Parameters
+
+|    Name    |     Type    | Required |           Note           |
+|:----------:|:-----------:|:--------:|:------------------------:|
+|  contract  |     Hash    | Required | Contract hash for lookup |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_transactions",
+    "id": 1,
+    "params": {
+        "contract": "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "a7e35dfcbc333772e7bb47ad3d86a981d485950e2e5b76d3fcdeeba2742c9593",
     ]
 }
 ```

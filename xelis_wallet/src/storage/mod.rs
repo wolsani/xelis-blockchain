@@ -6,10 +6,11 @@ mod tests;
 
 use std::{
     cmp::Ordering,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     num::NonZeroUsize,
 };
 use indexmap::IndexMap;
+use itertools::Either;
 use lru::LruCache;
 use xelis_common::{
     api::{
@@ -132,7 +133,10 @@ pub struct EncryptedStorage {
     // Transaction version to use
     tx_version: TxVersion,
     // Multisig state
-    multisig_state: Option<MultiSig>
+    multisig_state: Option<MultiSig>,
+    // In case the wallet is currently syncing
+    // we don't use our indexes as its not reliable
+    is_syncing: bool,
 }
 
 impl EncryptedStorage {
@@ -155,7 +159,8 @@ impl EncryptedStorage {
             synced_topoheight: None,
             last_coinbase_topoheight: None,
             tx_version: TxVersion::V0,
-            multisig_state: None
+            multisig_state: None,
+            is_syncing: false,
         };
 
         if storage.has_network()? {
@@ -188,6 +193,15 @@ impl EncryptedStorage {
         }
 
         Ok(storage)
+    }
+
+    pub fn set_syncing(&mut self, syncing: bool) {
+        trace!("set syncing: {}", syncing);
+        self.is_syncing = syncing;
+    }
+
+    pub fn is_syncing(&self) -> bool {
+        self.is_syncing
     }
 
     // Flush on disk to make sure it is saved
@@ -564,6 +578,28 @@ impl EncryptedStorage {
         Ok(self.tracked_assets.len())
     }
 
+    pub fn get_untracked_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash>> + 'a> {
+        trace!("get untracked assets");
+        self.get_assets()
+            .map(|iter| iter.map(|res| {
+                let hash = res?;
+                let is_tracked = self.is_asset_tracked_internal(&hash)?;
+                if is_tracked {
+                    Ok(None)
+                } else {
+                    Ok(Some(hash))
+                }
+            }).filter_map(Result::transpose))
+    }
+
+    pub fn get_untracked_assets_count(&self) -> Result<usize> {
+        trace!("get untracked assets count");
+        let assets_len = self.get_assets_count()?;
+        let tracked_len = self.get_tracked_assets_count()?;
+
+        Ok(assets_len.saturating_sub(tracked_len))
+    }
+
     // Set a multisig state
     pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
@@ -609,34 +645,15 @@ impl EncryptedStorage {
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)
     // returns all saved assets
-    pub async fn get_assets(&self) -> Result<HashSet<Hash>> {
+    pub fn get_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash>> + 'a> {
         trace!("get assets");
-        let mut cache = self.assets_cache.lock().await;
 
-        if cache.len() == self.assets.len() {
-            return Ok(cache.iter().map(|(k, _)| k.clone()).collect());
-        }
-
-        let mut assets = HashSet::new();
-        for res in self.assets.iter() {
-            let (key, value) = res?;
-            let raw_key = &self.cipher.decrypt_value(&key)?;
-            let mut reader = Reader::new(raw_key);
-            let asset = Hash::read(&mut reader)?;
-
-            if !cache.contains(&asset) {
-                let raw_value = &self.cipher.decrypt_value(&value)?;
-                let mut reader = Reader::new(raw_value);
-                let a = AssetData::read(&mut reader)?;
-
-                let is_tracked = self.is_asset_tracked_internal(&asset)?;
-                cache.put(asset.clone(), (a, is_tracked));
-            }
-
-            assets.insert(asset);
-        }
-
-        Ok(assets)
+        Ok(self.assets.iter().keys().map(move |res| {
+            let key = res?;
+            let raw_key = self.cipher.decrypt_value(&key)?;
+            let asset = Hash::from_bytes(&raw_key)?;
+            Ok(asset)
+        }))
     }
 
     pub fn get_assets_count(&self) -> Result<usize> {
@@ -1175,54 +1192,63 @@ impl EncryptedStorage {
         trace!("get filtered transactions");
 
         // Search the correct range
-        let iterator = match (min_topoheight, max_topoheight) {
-            (Some(min_topoheight), Some(max_topoheight)) => {
-                let min = self.search_transaction_id_for_topoheight(min_topoheight, None, None, true)
-                    .context("Error while searching min id")?;
-                let max = self.search_transaction_id_for_topoheight(max_topoheight + 1, min, None, true)
-                    .context("Error while searching max id")?;
+        let iterator = if self.is_syncing {
+            debug!("wallet is syncing, iterating over all transactions");
+            // Because we are syncing, we have to go through all transactions
+            // and filter them by topoheight later manually
+            // as we're syncing: its going from top to bottom for history
+            Either::Left(self.transactions_indexes.iter().values())
+        } else {
+            Either::Right(match (min_topoheight, max_topoheight) {
+                (Some(min_topoheight), Some(max_topoheight)) => {
+                    let min = self.search_transaction_id_for_topoheight(min_topoheight, None, None, true)
+                        .context("Error while searching min id")?;
+                    let max = self.search_transaction_id_for_topoheight(max_topoheight + 1, min, None, true)
+                        .context("Error while searching max id")?;
 
-                if let Some(min) = min {
-                    if let Some(max) = max {
-                        self.transactions_indexes.range(min.to_be_bytes()..max.to_be_bytes())
+                    if let Some(min) = min {
+                        if let Some(max) = max {
+                            self.transactions_indexes.range(min.to_be_bytes()..max.to_be_bytes())
+                        } else {
+                            self.transactions_indexes.range(min.to_be_bytes()..)
+                        }
                     } else {
-                        self.transactions_indexes.range(min.to_be_bytes()..)
+                        if let Some(max) = max {
+                            self.transactions_indexes.range(..max.to_be_bytes())
+                        } else {
+                            self.transactions_indexes.iter()
+                        }
                     }
-                } else {
+                },
+                (Some(min), None) => {
+                    let min = self.search_transaction_id_for_topoheight(min, None, None, true)
+                        .context("Error while searching min id only")?;
+                    if let Some(min) = min {
+                        self.transactions_indexes.range(min.to_be_bytes()..)
+                    } else {
+                        self.transactions_indexes.iter()
+                    }
+                },
+                (None, Some(max)) => {
+                    let max = self.search_transaction_id_for_topoheight(max + 1, None, None, true)
+                        .context("Error while searching max id only")?;
                     if let Some(max) = max {
                         self.transactions_indexes.range(..max.to_be_bytes())
                     } else {
                         self.transactions_indexes.iter()
                     }
-                }
-            },
-            (Some(min), None) => {
-                let min = self.search_transaction_id_for_topoheight(min, None, None, true)
-                    .context("Error while searching min id only")?;
-                if let Some(min) = min {
-                    self.transactions_indexes.range(min.to_be_bytes()..)
-                } else {
-                    self.transactions_indexes.iter()
-                }
-            },
-            (None, Some(max)) => {
-                let max = self.search_transaction_id_for_topoheight(max + 1, None, None, true)
-                    .context("Error while searching max id only")?;
-                if let Some(max) = max {
-                    self.transactions_indexes.range(..max.to_be_bytes())
-                } else {
-                    self.transactions_indexes.iter()
-                }
-            },
-            (None, None) => self.transactions_indexes.iter()
+                },
+                (None, None) => self.transactions_indexes.iter()
+            }.values().rev())
         };
 
         let mut transactions = Vec::new();
-        for el in iterator.values().rev().skip(skip.unwrap_or(0)) {
+        for el in iterator.skip(skip.unwrap_or(0)) {
             let tx_key = el?;
             let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
             trace!("entry: {}", entry.get_hash());
 
+            // We double check topoheight bounds here as well
             if min_topoheight.is_some_and(|min| entry.get_topoheight() < min) ||
                max_topoheight.is_some_and(|max| entry.get_topoheight() > max) {
                 debug!("entry topoheight {} out of bounds", entry.get_topoheight());

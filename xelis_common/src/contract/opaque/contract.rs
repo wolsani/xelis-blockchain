@@ -1,9 +1,9 @@
-use std::{collections::{hash_map::Entry, VecDeque}, hash, sync::Arc};
+use std::{collections::{VecDeque, hash_map::Entry}, hash, sync::Arc};
 
 use indexmap::IndexMap;
 use log::debug;
 use xelis_vm::{
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -24,6 +24,7 @@ use crate::{
         ModuleMetadata,
         ContractModule
     },
+    versioned_type::VersionedState,
     crypto::Hash,
     transaction::ContractDeposit
 };
@@ -54,7 +55,7 @@ impl Serializable for OpaqueContract {}
 
 impl JSONHelper for OpaqueContract {}
 
-pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -62,26 +63,38 @@ pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         .into_opaque_type()?;
 
     // Load the module from the provider
-    let module = match state.modules.entry(contract.clone()) {
-        Entry::Occupied(entry) => entry.into_mut(),
-        Entry::Vacant(entry) => {
-            let module = provider.load_contract_module(&contract, state.topoheight).await?;
-            entry.insert(module)
-        }
-    }.clone();
+    let module = match state.global_modules.get(&contract) {
+        Some(v) => v.as_ref().map(|(_, m)| m.as_ref().map(|m| m.as_ref())),
+        None => {
+            // Not found in cache, lets check in mutable cache
+            match state.loaded_modules.entry(contract.clone()) {
+                Entry::Occupied(e) => match e.into_mut() {
+                    Some((_, m)) => Some(m.as_ref()),
+                    None => None,
+                },
+                Entry::Vacant(e) => {
+                    // Load from provider
+                    let res = provider.load_contract_module(&contract, state.topoheight).await?
+                        .map(|(topo, module)| (VersionedState::FetchedAt(topo), module));
 
-    let Some(module) = module else {
+                    e.insert(res).as_ref().map(|(_, m)| m.as_ref())
+                }
+            }
+        },
+    }.flatten().cloned();
+
+    let Some(contract_module) = module else {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     };
 
     let opaque = OpaqueContract {
-        contract_module: module,
+        contract_module,
         hash: contract,
     };
     Ok(SysCallResult::Return(opaque.into()))
 }
 
-pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 
@@ -166,13 +179,14 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
     })
 }
 
-pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
     let p = params.remove(1)
         .into_owned()
         .to_vec()?
         .into_iter()
+        .rev()
         .map(|v| v.to_owned().into())
         .collect::<VecDeque<_>>();
 
@@ -198,7 +212,7 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
     })
 }
 
-pub fn contract_get_hash<'a>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context<'_, '_>) -> FnReturnType<ContractMetadata> {
+pub fn contract_get_hash<'a>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext<'_, '_>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 

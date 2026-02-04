@@ -1007,7 +1007,8 @@ async fn list_assets<S: Storage>(manager: &CommandManager, mut arguments: Argume
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let assets = storage.get_assets().await.context("Error while fetching assets")?
+    let assets = storage.get_assets().await
+        .context("Error while fetching assets")?
         .collect::<Result<Vec<_>, _>>()
         .context("Error while retrieving assets")?;
 
@@ -1279,7 +1280,7 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     let entries = module.module.chunks()
         .iter()
         .enumerate()
-        .filter(|(_, chunk)| matches!(chunk.access, Access::Entry))
+        .filter(|(_, chunk)| matches!(chunk.access, Access::Entry { .. }))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
 

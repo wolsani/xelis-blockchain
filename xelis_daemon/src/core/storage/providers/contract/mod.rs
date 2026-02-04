@@ -2,6 +2,7 @@ mod data;
 mod contract_logs;
 mod balance;
 mod scheduled_execution;
+mod event_callback;
 
 use std::borrow::Cow;
 
@@ -21,12 +22,13 @@ pub use data::*;
 pub use contract_logs::*;
 pub use balance::*;
 pub use scheduled_execution::*;
+pub use event_callback::*;
 
 // A versioned contract is a contract that can be updated or deleted
 pub type VersionedContractModule<'a> = Versioned<Option<Cow<'a, ContractModule>>>;
 
 #[async_trait]
-pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + ContractInfoProvider + ContractBalanceProvider + ContractScheduledExecutionProvider {
+pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + ContractInfoProvider + ContractBalanceProvider + ContractScheduledExecutionProvider + ContractEventCallbackProvider {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError>;
 
@@ -65,4 +67,11 @@ pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + Contra
 
     // Count the number of contracts
     async fn count_contracts(&self) -> Result<u64, BlockchainError>;
+
+    // Add a transaction for a contract
+    // this is unrelated to the DAG order, its just for easier lookup of TXs per contract
+    async fn add_tx_for_contract(&mut self, contract: &Hash, tx: &Hash) -> Result<(), BlockchainError>;
+
+    // Get all the transactions for a contract
+    async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 }

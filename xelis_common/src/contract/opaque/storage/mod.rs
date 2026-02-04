@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use log::debug;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -92,11 +92,11 @@ pub fn check_storage_entry_size(key: &ValueCell, value: &ValueCell) -> Result<us
     Ok(key_size + value_size)
 }
 
-pub fn storage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn storage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
 }
 
-pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -106,7 +106,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let value = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
@@ -128,7 +128,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     Ok(SysCallResult::Return(value.unwrap_or_default().into()))
 }
 
-pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -138,7 +138,7 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let contains = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
@@ -160,7 +160,7 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let value = params.remove(1)
         .into_owned();
     let key = params.remove(0)
@@ -173,7 +173,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
 
     let (storage, state) = from_context::<P>(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
 
     // We do it in two times: first we retrieve the VersionedState to update it
     let data_state = match cache.storage.get(&key) {
@@ -199,7 +199,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     // into_owned calls `deep_clone`
@@ -210,7 +210,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let data_state = match cache.storage.get(&key) {
         Some(Some((s, _))) => match s {
             VersionedState::New => {

@@ -4,6 +4,34 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.21.3
+
+- Add protection against stackoverflow attacks on deserialized types packed, contract data
+- Fix contract function from panicking
+- Fix compatibility for wallet/XSWD with WASM targets
+- Prevent wallet sync missing blocks on slow history sync
+- Add daemon private RPC Methods for management
+- add `verify_signed_data` RPC method on wallet
+- Daemon contract event id is now optional to listen all events
+
+
+## v1.21.2
+
+- Fix daemon potential race condition
+- Prevent re-sending ordered top blocks during chain sync
+- Fix transactions search in wallet
+- Fix transactions deletion on wallet
+- Fix XSWD
+
+## v1.21.1
+
+- Fix fast sync issues
+- Fix prune chain issues
+- Prepare contract version v1 with new features
+- Track contract error and store it in contract logs
+- Improve scheduled executions performance
+- Support backward compatibility for smart contracts versions
+
 ## v1.21.0
 
 - New Network Upgrade configured:

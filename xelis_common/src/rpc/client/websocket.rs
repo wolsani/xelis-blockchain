@@ -11,8 +11,9 @@ use std::{
 };
 use anyhow::Error;
 use futures_util::{
+    future::join_all,
+    SinkExt,
     StreamExt,
-    SinkExt
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -34,7 +35,7 @@ use crate::{
     utils::sanitize_ws_address
 };
 
-use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCResponse, JsonRPCResult};
+use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCErrorResponse, JsonRPCResponse, JsonRPCResult};
 
 // EventReceiver allows to get the event value parsed directly
 pub struct EventReceiver<T: DeserializeOwned> {
@@ -82,6 +83,60 @@ pub struct NoEvent;
 pub enum InternalMessage {
     Send(String),
     Close,
+}
+
+#[derive(Debug, Clone)]
+pub struct BatchRequest<'a> {
+    pub method: Cow<'a, str>,
+    pub params: Value,
+}
+
+impl<'a> BatchRequest<'a> {
+    pub fn new<P: Serialize>(method: impl Into<Cow<'a, str>>, params: P) -> JsonRPCResult<Self> {
+        Ok(Self {
+            method: method.into(),
+            params: serde_json::to_value(params)?,
+        })
+    }
+
+    pub fn without_params(method: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            method: method.into(),
+            params: Value::Null,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct BatchResponse {
+    id: usize,
+    result: Option<Value>,
+    error: Option<JsonRPCErrorResponse>,
+}
+
+impl BatchResponse {
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub fn into_result<T: DeserializeOwned>(self) -> JsonRPCResult<T> {
+        if let Some(error) = self.error {
+            return Err(JsonRPCError::ServerError {
+                code: error.code,
+                message: error.message,
+                data: error
+                    .data
+                    .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default()),
+            });
+        }
+
+        let result = self.result.unwrap_or(Value::Null);
+        Ok(serde_json::from_value(result)?)
+    }
 }
 
 // A JSON-RPC Client over WebSocket protocol to support events
@@ -478,27 +533,19 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                     let msg = res?;
                     match msg {
                         Message::Text(text) => {
-                            let response: JsonRPCResponse = serde_json::from_str(&text)?;
-                            if let Some(id) = response.id {
-                                // send the response to the requester if it matches the ID
-                                {
-                                    let mut requests = self.requests.lock().await;
-                                    if let Some(sender) = requests.remove(&id) {
-                                        if let Err(e) = sender.send(response) {
-                                            debug!("Error sending response to the request: {:?}", e);
+                            let parsed: Value = serde_json::from_str(&text)?;
+
+                            match parsed {
+                                Value::Array(responses) => {
+                                    for response in responses {
+                                        if let Err(e) = self.process_response_value(response).await {
+                                            debug!("Error while processing batch response: {:?}", e);
                                         }
-                                        continue;
                                     }
                                 }
-
-                                // Check if this ID corresponds to a event subscribed
-                                {
-                                    let mut handlers = self.handler_by_id.lock().await;
-                                    if let Some(sender) = handlers.get_mut(&id) {
-                                        // Check that we still have someone who listen it
-                                        if let Err(e) = sender.send(response.result.unwrap_or_default()) {
-                                            debug!("Error sending event to the request: {:?}", e);
-                                        }
+                                value => {
+                                    if let Err(e) = self.process_response_value(value).await {
+                                        debug!("Error while processing response: {:?}", e);
                                     }
                                 }
                             }
@@ -510,6 +557,34 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                         m => {
                             debug!("Received unhandled message: {:?}", m);
                         }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn process_response_value(&self, value: Value) -> JsonRPCResult<()> {
+        let mut response: JsonRPCResponse = serde_json::from_value(value)?;
+        if let Some(id) = response.id {
+            // send the response to the requester if it matches the ID
+            {
+                let mut requests = self.requests.lock().await;
+                if let Some(sender) = requests.remove(&id) {
+                    if let Err(e) = sender.send(response) {
+                        debug!("Error sending response to the request: {:?}", e);
+                    }
+                    return Ok(());
+                }
+            }
+
+            // Check if this ID corresponds to a event subscribed
+            {
+                let mut handlers = self.handler_by_id.lock().await;
+                if let Some(sender) = handlers.get_mut(&id) {
+                    if let Err(e) = sender.send(response.result.take().unwrap_or_default()) {
+                        debug!("Error sending event to the request: {:?}", e);
                     }
                 }
             }
@@ -538,7 +613,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Subscribe to an event
     // Capacity represents the number of events that can be stored in the channel
-    pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
+    pub async fn subscribe_event_raw(&self, event: E, capacity: usize) -> JsonRPCResult<broadcast::Receiver<Value>> {
         trace!("Subscribing to event {:?}", event);
         // Returns a Receiver for this event if already registered
         {
@@ -546,7 +621,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             if let Some(id) = ids.get(&event) {
                 let handlers = self.handler_by_id.lock().await;
                 if let Some(sender) = handlers.get(id) {
-                    return Ok(EventReceiver::new(sender.subscribe()));
+                    return Ok(sender.subscribe());
                 }
             }
         }
@@ -572,6 +647,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             handlers.insert(id, sender);
         }
 
+        Ok(receiver)
+    }
+
+    // Subscribe to an event with typed receiver
+    pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
+        let receiver = self.subscribe_event_raw(event, capacity).await?;
         Ok(EventReceiver::new(receiver))
     }
 
@@ -652,6 +733,69 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         let result = response.result.unwrap_or(Value::Null);
 
         Ok(serde_json::from_value(result)?)
+    }
+
+    // Send a batch of requests with heterogeneous params/results
+    pub async fn batch<'a, const N: usize, I>(&self, requests: I) -> JsonRPCResult<[BatchResponse; N]>
+    where
+        I: IntoIterator<Item = BatchRequest<'a>>,
+    {
+        let mut payload = Vec::new();
+        let mut receivers = Vec::new();
+
+        {
+            let mut pending = self.requests.lock().await;
+            for req in requests.into_iter() {
+                let id = self.next_id();
+                let (sender, receiver) = oneshot::channel();
+                pending.insert(id, sender);
+
+                payload.push(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "method": req.method,
+                    "id": id,
+                    "params": req.params
+                }));
+
+                receivers.push((id, receiver));
+            }
+        }
+
+        self.send_value(Value::Array(payload)).await?;
+
+        let futures = receivers
+            .into_iter()
+            .map(|(id, receiver)| async move {
+                let response = timeout(self.timeout_after, receiver)
+                    .await
+                    .map_err(|_| JsonRPCError::TimedOut(json!({ "id": id }).to_string()))?
+                    .map_err(|e| JsonRPCError::NoResponse(json!({ "id": id }).to_string(), e.to_string()))?;
+
+                Ok::<_, JsonRPCError>(BatchResponse {
+                    id,
+                    result: response.result,
+                    error: response.error,
+                })
+            });
+
+        let results = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(results.try_into().map_err(|_| JsonRPCError::InvalidBatch)?)
+    }
+
+    async fn send_value(&self, value: Value) -> JsonRPCResult<()> {
+        let serialized = serde_json::to_string(&value)?;
+        let sender = self.sender.lock().await;
+
+        sender
+            .send(InternalMessage::Send(serialized.clone()))
+            .await
+            .map_err(|e| JsonRPCError::SendError(serialized, e.to_string()))?;
+
+        Ok(())
     }
 
     // Send a request to the server without waiting for the response

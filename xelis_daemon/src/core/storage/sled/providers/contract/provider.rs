@@ -20,6 +20,7 @@ use crate::core::storage::{
     SledStorage,
     AssetCirculatingSupplyProvider,
     ContractScheduledExecutionProvider,
+    ContractEventCallbackProvider,
 };
 
 #[async_trait]
@@ -99,9 +100,17 @@ impl ContractProvider for SledStorage {
     }
 
     // Load a contract module
-    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<ContractModule>, anyhow::Error> {
+    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ContractModule>)>, anyhow::Error> {
         trace!("load contract module for contract {} at topoheight {}", contract, topoheight);
         let res = self.get_contract_at_maximum_topoheight_for(contract, topoheight).await?;
-        Ok(res.and_then(|(_, module)| module.take().map(|v| v.into_owned())))
+        Ok(res.map(|(topoheight, module)| (topoheight, module.take().map(|v| v.into_owned()))))
+    }
+
+    // Check if a contract has already a callback registered for an event at topoheight
+    async fn has_contract_callback_for_event(&self, contract: &Hash, event_id: u64, listener: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        trace!("check if contract {} has callback for event {} to listener {} at topoheight {}", contract, event_id, listener, topoheight);
+
+        let res = self.get_event_callback_for_contract_at_maximum_topoheight(contract, event_id, listener, topoheight).await?;
+        Ok(res.is_some_and(|(_, v)| v.get().is_some()))
     }
 }

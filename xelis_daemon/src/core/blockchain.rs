@@ -14,7 +14,7 @@ use xelis_common::{
             StableTopoHeightChangedEvent,
             TransactionExecutedEvent,
             GetTransactionResult,
-            NewContractEvent,
+            ContractDeployEvent,
             InvokeContractEvent,
             NewAssetEvent,
             ContractTransfersEvent,
@@ -22,6 +22,7 @@ use xelis_common::{
             ContractTransfersEntryKey,
             ContractEvent,
             MempoolTransactionSummary,
+            NewTopoHeightEvent,
         },
         RPCContractLog,
         RPCTransaction,
@@ -83,7 +84,7 @@ use xelis_common::{
     varuint::VarUint,
     contract::{ContractMetadata, ContractVersion, build_environment},
 };
-use xelis_vm::Environment;
+use xelis_vm::{Environment, tid};
 use crate::{
     config::{
         get_genesis_block_hash, get_hex_genesis_block,
@@ -237,6 +238,8 @@ pub struct Blockchain<S: Storage> {
     // Cache for mining block header templates
     mining_cache: RwLock<Option<BlockHeader>>,
 }
+
+tid! { impl<'a, S: 'static> TidAble<'a> for Blockchain<S> where S: Storage }
 
 impl<S: Storage> Blockchain<S> {
     pub async fn new(mut config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
@@ -2419,8 +2422,11 @@ impl<S: Storage> Blockchain<S> {
 
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
+                    
                     // Link the transaction hash to this block
-                    if chain_state.link_tx_to_block(&tx_hash, &hash) {
+                    // If the TX was already executed in chain state, we can skip it
+                    // If its a contract invocation, we pass the contract so we can link it for easier lookup
+                    if chain_state.link_tx_to_block(&tx_hash, &hash, tx.invoked_contract()) {
                         debug!("Tx {} is already executed according to cache, skipping...", tx_hash);
                         continue;
                     }
@@ -2479,23 +2485,23 @@ impl<S: Storage> Blockchain<S> {
                         // Check TX type for RPC events
                         match tx.get_data() {
                             TransactionType::InvokeContract(payload) => {
-                                let event = NotifyEvent::InvokeContract {
+                                let event = NotifyEvent::ContractInvoke {
                                     contract: payload.contract.clone(),
                                 };
 
                                 if should_track_events.contains(&event) {
                                     let is_mainnet = self.network.is_mainnet();
 
-                                    if let Some(contract_outputs) = chain_state.get_contract_logs_for_tx(&tx_hash) {
-                                        let contract_outputs = contract_outputs.into_iter()
-                                        .map(|output| RPCContractLog::from_log(output, is_mainnet))
+                                    if let Some(contract_logs) = chain_state.get_contract_logs_for_tx(&tx_hash) {
+                                        let contract_logs = contract_logs.into_iter()
+                                        .map(|log| RPCContractLog::from_log(log, is_mainnet))
                                         .collect::<Vec<_>>();
 
                                         let value = json!(InvokeContractEvent {
                                             tx_hash: Cow::Borrowed(&tx_hash),
                                             block_hash: Cow::Borrowed(&hash),
                                             topoheight: highest_topo,
-                                            contract_outputs,
+                                            contract_logs,
                                         });
 
                                         events.entry(event)
@@ -2505,13 +2511,13 @@ impl<S: Storage> Blockchain<S> {
                                 }
                             },
                             TransactionType::DeployContract(_) => {
-                                if should_track_events.contains(&NotifyEvent::DeployContract) {
-                                    let value = json!(NewContractEvent {
+                                if should_track_events.contains(&NotifyEvent::ContractDeploy) {
+                                    let value = json!(ContractDeployEvent {
                                         contract: Cow::Borrowed(&tx_hash),
                                         block_hash: Cow::Borrowed(&hash),
                                         topoheight: highest_topo,
                                     });
-                                    events.entry(NotifyEvent::DeployContract)
+                                    events.entry(NotifyEvent::ContractDeploy)
                                         .or_insert_with(Vec::new)
                                         .push(value);
                                 }
@@ -2599,21 +2605,40 @@ impl<S: Storage> Blockchain<S> {
                     let caches = chain_state.get_contracts_cache();
                     for (contract, cache) in caches {
                         for (id, elements) in cache.events.iter() {
-                            let event = NotifyEvent::ContractEvent {
+                            let any_event = NotifyEvent::ContractEvent {
                                 contract: (*contract).clone(),
-                                id: *id
+                                id: None,
                             };
 
-                            if should_track_events.contains(&event) {
-                                let entry = events.entry(event)
-                                    .or_insert_with(Vec::new);
+                            let event_id = NotifyEvent::ContractEvent {
+                                contract: (*contract).clone(),
+                                id: Some(*id),
+                            };
 
-                                for el in elements {
-                                    entry.push(json!(ContractEvent {
+                            let event_id_tracked = should_track_events.contains(&event_id);
+                            let event_tracked = should_track_events.contains(&any_event);
+
+                            if  event_id_tracked || event_tracked {
+                                let elements = elements.into_iter()
+                                    .map(|el| json!(ContractEvent {
                                         topoheight: highest_topo,
                                         block_hash: Cow::Borrowed(&hash),
+                                        event_id: *id,
                                         data: Cow::Borrowed(el)
-                                    }));
+                                    }))
+                                    .collect::<Vec<_>>();
+
+                                if event_id_tracked {
+                                    let entry = events.entry(event_id)
+                                        .or_insert_with(Vec::new);
+                                    entry.extend(elements.iter().cloned());
+                                }
+
+                                if event_tracked {
+                                    let entry = events.entry(any_event)
+                                        .or_insert_with(Vec::new);
+
+                                    entry.extend(elements.into_iter());
                                 }
                             }
                         }
@@ -2713,6 +2738,16 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
                 storage.set_top_topoheight(highest_topo).await?;
                 current_topoheight = highest_topo;
+
+                if should_track_events.contains(&NotifyEvent::NewTopoHeight) {
+                    let value = json!(NewTopoHeightEvent {
+                        new_topoheight: highest_topo,
+                    });
+
+                    events.entry(NotifyEvent::NewTopoHeight)
+                        .or_insert_with(Vec::new)
+                        .push(value);
+                }
             }
 
             // If block is directly orphaned

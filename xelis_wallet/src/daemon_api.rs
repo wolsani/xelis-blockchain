@@ -7,8 +7,6 @@ use std::{
 
 use anyhow::Result;
 use indexmap::IndexSet;
-use serde::Serialize;
-use serde_json::Value;
 use xelis_common::{
     account::VersionedBalance,
     api::{daemon::*, RPCContractLog},
@@ -18,8 +16,8 @@ use xelis_common::{
         Hash
     },
     rpc::client::{
+        BatchRequest,
         EventReceiver,
-        JsonRPCResult,
         WebSocketJsonRPCClient,
         WebSocketJsonRPCClientImpl
     },
@@ -52,11 +50,20 @@ impl DaemonAPI {
         })
     }
 
-    pub fn get_client(&self) -> &WebSocketJsonRPCClient<NotifyEvent> {
+    // Get the event channel capacity
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    // Get the underlying websocket client
+    #[inline]
+    pub fn client(&self) -> &WebSocketJsonRPCClient<NotifyEvent> {
         &self.client
     }
 
     // is the websocket connection alive
+    #[inline]
     pub fn is_online(&self) -> bool {
         trace!("is_online");
         self.client.is_online()
@@ -103,11 +110,6 @@ impl DaemonAPI {
     pub async fn on_connection_lost(&self) -> broadcast::Receiver<()> {
         trace!("on_connection_lost");
         self.client.on_connection_lost().await
-    }
-
-    pub async fn call<P: Serialize>(&self, method: &String, params: &P) -> JsonRPCResult<Value> {
-        trace!("call: {}", method);
-        self.client.call_with(method.as_str(), params).await
     }
 
     pub async fn on_new_block_event(&self) -> Result<EventReceiver<NewBlockEvent>> {
@@ -362,5 +364,49 @@ impl DaemonAPI {
             topoheight,
         }).await?;
         Ok(outputs)
+    }
+
+    // Batch request for block and contracts outputs
+    pub async fn get_block_and_outputs(&self, topoheight: u64, address: &Address) -> Result<(BlockResponse, GetContractsOutputsResult<'static>)> {
+        trace!("get_block_and_outputs batch");
+
+        let [block, outputs] = self.client.batch([
+            BatchRequest::new("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
+                topoheight,
+                include_txs: true
+            })?,
+            BatchRequest::new("get_contracts_outputs", &GetContractOutputsParams {
+                address: Cow::Borrowed(address),
+                topoheight,
+            })?,
+        ]).await?;
+        let block: BlockResponse = block.into_result()?;
+        let outputs: GetContractsOutputsResult<'static> = outputs.into_result()?;
+        Ok((block, outputs))
+    }
+
+    // Batch request for block, outputs, and balance at topoheight
+    pub async fn get_block_outputs_and_balance(&self, block_topoheight: u64, address: &Address, asset: &Hash, balance_topoheight: u64) -> Result<(BlockResponse, GetContractsOutputsResult<'static>, VersionedBalance)> {
+        trace!("get_block_outputs_and_balance batch");
+
+        let [block, outputs, balance] = self.client.batch([
+            BatchRequest::new("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
+                topoheight: block_topoheight,
+                include_txs: true
+            })?,
+            BatchRequest::new("get_contracts_outputs", &GetContractOutputsParams {
+                address: Cow::Borrowed(address),
+                topoheight: block_topoheight,
+            })?,
+            BatchRequest::new("get_balance_at_topoheight", &GetBalanceAtTopoHeightParams {
+                topoheight: balance_topoheight,
+                asset: Cow::Borrowed(asset),
+                address: Cow::Borrowed(address)
+            })?,
+        ]).await?;
+        let block: BlockResponse = block.into_result()?;
+        let outputs: GetContractsOutputsResult<'static> = outputs.into_result()?;
+        let balance: VersionedBalance = balance.into_result()?;
+        Ok((block, outputs, balance))
     }
 }

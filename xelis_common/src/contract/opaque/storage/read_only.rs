@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -31,7 +31,7 @@ impl JSONHelper for OpaqueReadOnlyStorage {}
 
 impl Serializable for OpaqueReadOnlyStorage {}
 
-pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut parameters: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut parameters: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let hash: Hash = parameters.remove(0)
         .into_owned()
@@ -39,14 +39,14 @@ pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
 
     // If we don't have a global cache or an actual local cache for this contract
     // OR the contract does not exist in the storage, we return null
-    if get_optional_cache_for_contract(&state.caches, state.global_caches, &hash).is_none() && !storage.has_contract(&hash, state.topoheight).await? {
+    if get_optional_cache_for_contract(&state.changes.caches, state.global_caches, &hash).is_none() && !storage.has_contract(&hash, state.topoheight).await? {
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueReadOnlyStorage(hash))).into()))
 }
 
-pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let zelf = zelf?;
     let zelf: &OpaqueReadOnlyStorage = zelf
@@ -60,7 +60,7 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
     }
 
     // Read from global cache first, then fallback to provider
-    let value = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())
+    let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone())
         .storage
         .entry(key.clone()) {
             Entry::Occupied(v) => v.get()
@@ -81,7 +81,7 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
     Ok(SysCallResult::Return(value.map(|v| v.deep_clone()).unwrap_or_default().into()))
 }
 
-pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let zelf = zelf?;
     let zelf: &OpaqueReadOnlyStorage = zelf
@@ -95,7 +95,7 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIns
     }
 
     // Read from global cache first, then fallback to provider
-    let contains = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())
+    let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone())
         .storage
         .entry(key.clone()) {
             Entry::Occupied(v) => v.get()

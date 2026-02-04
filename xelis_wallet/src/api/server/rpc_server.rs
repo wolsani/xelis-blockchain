@@ -26,6 +26,7 @@ use xelis_common::{
             WebSocketServerHandler
         },
         RPCHandler,
+        ShareableTid,
     }
 };
 use actix_web::{
@@ -49,7 +50,7 @@ pub struct AuthConfig {
 
 pub struct WalletRpcServer<W>
 where
-    W: Clone + Send + Sync + 'static
+    W: ShareableTid<'static>,
 {
     handle: Mutex<Option<ServerHandle>>,
     websocket: WebSocketServerShared<EventWebSocketHandler<W, NotifyEvent>>,
@@ -58,7 +59,7 @@ where
 
 impl<W> WalletRpcServer<W>
 where
-    W: Clone + Send + Sync + 'static
+    W: ShareableTid<'static>,
 {
     pub async fn new(bind_address: String, rpc_handler: RPCHandler<W>, auth_config: Option<AuthConfig>, threads: Option<usize>) -> Result<WalletRpcServerShared<W>> {
         let server = Arc::new(Self {
@@ -133,7 +134,7 @@ where
 
 impl<W> WebSocketServerHandler<EventWebSocketHandler<W, NotifyEvent>> for WalletRpcServer<W>
 where
-    W: Clone + Send + Sync + 'static
+    W: ShareableTid<'static>,
 {
     fn get_websocket(&self) -> &WebSocketServerShared<EventWebSocketHandler<W, NotifyEvent>> {
         &self.websocket
@@ -142,7 +143,7 @@ where
 
 impl<W> RPCServerHandler<W> for WalletRpcServer<W>
 where
-    W: Clone + Send + Sync + 'static
+    W: ShareableTid<'static>,
 {
     fn get_rpc_handler(&self) -> &RPCHandler<W> {
         &self.get_websocket().get_handler().get_rpc_handler()
@@ -151,7 +152,7 @@ where
 
 async fn auth<W>(request: ServiceRequest, credentials: BasicAuth) -> Result<ServiceRequest, (Error, ServiceRequest)>
 where
-    W: Clone + Send + Sync + 'static
+    W: ShareableTid<'static>,
 {
     let data: Option<&Data<WalletRpcServer<W>>> = request.app_data();
     match data {

@@ -2,7 +2,7 @@ use anyhow::Context as AnyhowContext;
 use xelis_vm::{
     impl_opaque,
     traits::Serializable,
-    Context,
+    VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
@@ -44,7 +44,7 @@ impl Serializable for Signature {
     }
 }
 
-pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let bytes = params[0]
         .as_ref()
         .as_bytes()?;
@@ -58,7 +58,7 @@ pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetada
     Ok(SysCallResult::Return(Primitive::Opaque(signature.into()).into()))
 }
 
-pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let signature: &Signature = zelf.as_opaque_type()?;
 

@@ -3,12 +3,13 @@ mod contract_logs;
 mod provider;
 mod balance;
 mod scheduled_execution;
+mod event_callback;
 
 use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
-    crypto::Hash,
-    serializer::Serializer,
+    crypto::{HASH_SIZE, Hash},
+    serializer::{Serializer, Skip},
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -16,7 +17,7 @@ use crate::core::{
         ContractProvider,
         SledStorage,
         VersionedContractModule,
-        sled::CONTRACTS_COUNT
+        sled::CONTRACTS_COUNT,
     }
 };
 use log::trace;
@@ -173,6 +174,25 @@ impl ContractProvider for SledStorage {
         trace!("Counting contracts");
 
         Ok(self.cache().contracts_count)
+    }
+
+    async fn add_tx_for_contract(&mut self, contract: &Hash, tx: &Hash) -> Result<(), BlockchainError> {
+        trace!("Adding tx {} for contract {}", tx, contract);
+        let mut key = contract.as_bytes().to_vec();
+        key.extend_from_slice(tx.as_bytes());
+
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_transactions, &key, &[])?;
+
+        Ok(())
+    }
+
+    async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("Getting txs for contract {}", contract);
+        let prefix = contract.as_bytes();
+
+        Ok(Self::scan_prefix_keys::<Skip<HASH_SIZE, Hash>>(self.snapshot.as_ref(), &self.contracts_transactions, prefix)
+            .map(|res| res.map(|key| key.0))
+        )
     }
 }
 

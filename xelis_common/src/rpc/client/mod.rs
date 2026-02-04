@@ -13,7 +13,9 @@ pub use websocket::{
     WebSocketJsonRPCClient,
     EventReceiver,
     NoEvent,
-    InternalMessage
+    InternalMessage,
+    BatchRequest,
+    BatchResponse
 };
 
 const JSON_RPC_VERSION: &str = "2.0";
@@ -51,6 +53,8 @@ pub enum JsonRPCError {
     MethodNotFound,
     #[error("Invalid parameters were provided")]
     InvalidParams,
+    #[error("Batch response could not be mapped to requests")]
+    InvalidBatch,
     #[error("Server internal JSON-RPC error: {}", message)]
     InternalError {
         message: String,
