@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:0.1.71-rust-1.86-slim-bookworm AS chef
+FROM lukemathwalker/cargo-chef:0.1.73-rust-1.90-slim-bookworm AS chef
 
 ENV BUILD_DIR=/tmp/xelis-build
 
