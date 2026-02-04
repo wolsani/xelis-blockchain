@@ -469,13 +469,11 @@ impl Serializer for Module {
                         params.push(TypePacked::read(reader)?);
                     }
 
-                    Ok(Some(params))
-                } else {
-                    Ok(None)
+                    return Ok(Some(params))
                 }
-            } else {
-                Ok(None)
             }
+
+            Ok(None)
         }
 
         for i in 0..chunks_len {
