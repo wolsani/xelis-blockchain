@@ -46,6 +46,7 @@ async-trait = { workspace = true }
 cfg-if = { workspace = true }
 metrics = { workspace = true }
 schemars = { workspace = true }
+runtime-context = { workspace = true }
 
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }

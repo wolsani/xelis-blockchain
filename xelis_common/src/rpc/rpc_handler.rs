@@ -11,7 +11,6 @@ use serde_json::{json, Map, Value};
 use metrics::{counter, histogram};
 use log::trace;
 use schemars::{schema_for, JsonSchema, Schema};
-pub use xelis_vm::{Context, ShareableTid, tid};
 use crate::{
     async_handler,
     time::Instant,
@@ -22,6 +21,9 @@ use crate::{
         JSON_RPC_VERSION
     }
 };
+
+// Re-export the necessary types and traits for RPC handling
+pub use runtime_context::{Context, ShareableTid, tid};
 
 // Type definition for an RPC method handler
 // It is a boxed function that takes a context reference and a JSON value as parameters

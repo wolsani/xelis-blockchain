@@ -28,6 +28,7 @@ use futures_util::StreamExt;
 use log::{debug, error, trace};
 use serde::Serialize;
 use serde_json::json;
+use runtime_context::tid;
 use crate::{
     config::MAX_BLOCK_SIZE,
     immutable::Immutable,
@@ -47,8 +48,7 @@ use crate::{
             error::Elapsed,
             timeout
         }
-    },
-    rpc::tid,
+    }
 };
 pub use self::{
     handler::EventWebSocketHandler,

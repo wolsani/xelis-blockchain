@@ -2235,7 +2235,7 @@ pub fn state_from_context<'a, 'ty, 'r>(context: &'a mut VMContext<'ty, 'r>) -> R
 }
 
 pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut VMContext<'ty, 'r>) -> Result<(&'a P, &'a mut ChainState<'ty>), anyhow::Error> {
-    let mut datas = context.get_many_mut([&ContractProviderWrapper::<P>::id(), &TypeId::of::<ChainState>()]);
+    let mut datas = context.get_disjoint_mut([&ContractProviderWrapper::<P>::id(), &TypeId::of::<ChainState>()]);
 
     let wrapper: &mut ContractProviderWrapper<P> = datas[0]
         .take()
