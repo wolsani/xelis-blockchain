@@ -53,6 +53,7 @@ clap = { workspace = true, optional = true }
 actix-web = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
+strum = { workspace = true, optional = true }
 
 # Query system
 regex = "1"
@@ -97,7 +98,7 @@ tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-mult
 deadlock-detection = ["tokio"]
 
 rpc = []
-rpc-client = ["rpc", "tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
+rpc-client = ["rpc", "tokio", "dep:reqwest", "dep:strum", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 rpc-server = ["rpc", "dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
 
 clap = ["dep:clap"]
