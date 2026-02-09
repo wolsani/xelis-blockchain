@@ -169,9 +169,12 @@ where
     }
 
     pub async fn add_application(&self, state: &AppStateShared) -> Result<Value, XSWDError> {
+        debug!("Adding application {} with id {}", state.get_name(), state.get_id());
         // Request permission to user
         let _permit = self.semaphore.acquire().await
             .map_err(|_| XSWDError::SemaphoreError)?;
+
+        debug!("Requesting permission for application {}", state.get_name());
 
         let wallet = self.handler.get_data();
         state.set_requesting(true);
@@ -183,6 +186,8 @@ where
             }
         };
         state.set_requesting(false);
+
+        debug!("Permission result acquired for application {}", state.get_name());
 
         if !permission.is_positive() {
             return Err(XSWDError::PermissionDenied)
@@ -236,6 +241,7 @@ where
         if app.is_requesting() {
             debug!("Application {} is requesting a permission, aborting...", app.get_name());
             self.handler.get_data().cancel_request_permission(&app).await?;
+            debug!("Permission request for application {} has been cancelled", app.get_name());
         }
 
         self.events.on_close(&app).await;
@@ -275,6 +281,7 @@ where
                 .copied()
         };
 
+        debug!("permission for method '{}' is '{:?}'", request.method, permission);
         match permission {
             // If the permission wasn't mentionned at AppState creation
             // It is directly rejected
@@ -287,6 +294,8 @@ where
             Some(Permission::Ask) => {
                 let result = self.handler.get_data()
                     .request_permission(app, PermissionRequest::Request(request)).await?;
+
+                debug!("Permission request result for method '{}' is '{:?}'", request.method, result);
 
                 match result {
                     PermissionResult::Accept => Ok(()),

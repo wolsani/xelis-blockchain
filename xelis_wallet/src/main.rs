@@ -94,6 +94,7 @@ use {
         wallet::XSWDEvent,
     },
     xelis_common::{
+        api::wallet::XSWDPrefetchPermissions,
         rpc::RpcRequest,
         prompt::ShareablePrompt,
         tokio::{
@@ -231,67 +232,115 @@ async fn register_default_commands(manager: &CommandManager) -> Result<(), Comma
 #[cfg(feature = "xswd")]
 // This must be run in a separate task
 async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: ShareablePrompt) {
-    while let Some(event) = receiver.recv().await {
-        match event {
-            XSWDEvent::CancelRequest(_, callback) => {
-                let res = prompt.cancel_read_input().await;
-                if callback.send(res).is_err() {
-                    error!("Error while sending cancel response back to XSWD");
-                }
-            },
-            XSWDEvent::RequestApplication(app_state, callback) => {
-                let prompt = prompt.clone();
-                let res = xswd_handle_request_application(&prompt, app_state).await;
-                if callback.send(res).is_err() {
-                    error!("Error while sending application response back to XSWD");
-                }
-            },
-            XSWDEvent::RequestPermission(app_state, request, callback) => {
-                let res = xswd_handle_request_permission(&prompt, app_state, request).await;
-                if callback.send(res).is_err() {
-                    error!("Error while sending permission response back to XSWD");
-                }
-            },
-            XSWDEvent::AppDisconnect(app) => {
-                if app.is_requesting() {
-                    let res = prompt.cancel_read_input().await;
-                    if let Err(e) = res {
-                        error!("Error while cancelling request for disconnected app {}: {:#}", app.get_name(), e);
+    use std::collections::VecDeque;
+    use futures::future::OptionFuture;
+    use xelis_common::tokio::select;
+
+    let mut queue = VecDeque::new();
+    let mut current = None;
+
+    let prompt = &prompt;
+    loop {
+        select! {
+            event = receiver.recv() => {
+                debug!("Received XSWD event");
+                match event {
+                    Some(XSWDEvent::CancelRequest(app, callback)) => {
+                        let res = if app.is_requesting() {
+                            debug!("Cancelling current request for app {} due to cancel request event", app.get_name());
+                            app.set_requesting(false);
+                            prompt.cancel_read_input().await
+                        } else {
+                            Ok(())
+                        };
+
+                        if callback.send(res).is_err() {
+                            error!("Error while sending cancel response back to XSWD");
+                        }
                     }
+                    Some(XSWDEvent::AppDisconnect(app)) => {
+                        if app.is_requesting() {
+                            debug!("App {} disconnected while requesting, cancelling current request", app.get_name());
+                            let res = prompt.cancel_read_input().await;
+                            if let Err(e) = res {
+                                error!("Error while cancelling request for disconnected app {}: {:#}", app.get_name(), e);
+                            }
+
+                            app.set_requesting(false);
+                        }
+                    }
+                    Some(event) => queue.push_back(event),
+                    None => break,
                 }
             },
-            XSWDEvent::PrefetchPermissions(app_state, permissions, callback) => {
-                // Either check in existing permissions or ask user for each permission
-                let mut message = format!("XSWD: Application {} ({}) is requesting multiple permissions to your wallet", app_state.get_name(), app_state.get_id());
-                if let Some(reason) = permissions.reason.as_ref() {
-                    message += &format!("\r\nReason: '{}'", reason);
-                }
-                message += "\r\nYou can accept or reject all these permissions when the application will request them individually.";
-                message += &format!("\r\nPermissions ({}):", permissions.permissions.len());
-
-                for permission in permissions.permissions.iter() {
-                    message += &format!("\r\n- {}", permission);
-                }
-
-                message += "\r\nDo you accept these permissions enabled by default?";
-                message += "\r\nThis means you won't be asked again for these permissions when the application will request them.";
-                message += "\r\n(Y/N): ";
-
-                let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), &["y", "n"]).await.is_ok_and(|v| v == "y");
-
-                let mut results = IndexMap::new();
-                if accepted {
-                    for permission in permissions.permissions {
-                        results.insert(permission, Permission::Allow);
-                    }
-                }
-
-                if callback.send(Ok(results)).is_err() {
-                    error!("Error while sending prefetch permissions response back to XSWD");
-                }
+            Some(_) = OptionFuture::from(current.as_mut()) => {
+                info!("Finished handling XSWD event, checking if there is pending events in the queue");
+                current = None;
             }
-        };
+        }
+
+        while current.is_none() {
+            let event = match queue.pop_front() {
+                Some(event) => event,
+                None => break,
+            };
+
+            let future = async move {
+                match event {
+                    XSWDEvent::RequestApplication(app_state, callback) => {
+                        let res = xswd_handle_request_application(&prompt, app_state).await;
+                        if callback.send(res).is_err() {
+                            error!("Error while sending application response back to XSWD");
+                        }
+                    }
+                    XSWDEvent::RequestPermission(app_state, request, callback) => {
+                        let res = xswd_handle_request_permission(&prompt, app_state, request).await;
+                        if callback.send(res).is_err() {
+                            error!("Error while sending permission response back to XSWD");
+                        }
+                    }
+                    XSWDEvent::PrefetchPermissions(app_state, permissions, callback) => {
+                        let res = xswd_handle_prefetch_permissions(&prompt, app_state, permissions).await;
+                        if callback.send(res).is_err() {
+                            error!("Error while sending prefetch permissions response back to XSWD");
+                        }
+                    }
+                    XSWDEvent::CancelRequest(_, _) | XSWDEvent::AppDisconnect(_) => {}
+                }
+            };
+
+            current = Some(Box::pin(future));
+        }
     }
+}
+
+async fn xswd_handle_prefetch_permissions(prompt: &ShareablePrompt, app_state: AppStateShared, permissions: XSWDPrefetchPermissions) -> Result<IndexMap<String, Permission>, Error> {
+    // Either check in existing permissions or ask user for each permission
+    let mut message = format!("XSWD: Application {} ({}) is requesting multiple permissions to your wallet", app_state.get_name(), app_state.get_id());
+    if let Some(reason) = permissions.reason.as_ref() {
+        message += &format!("\r\nReason: '{}'", reason);
+    }
+    message += "\r\nYou can accept or reject all these permissions when the application will request them individually.";
+    message += &format!("\r\nPermissions ({}):", permissions.permissions.len());
+
+    for permission in permissions.permissions.iter() {
+        message += &format!("\r\n- {}", permission);
+    }
+
+    message += "\r\nDo you accept these permissions enabled by default?";
+    message += "\r\nThis means you won't be asked again for these permissions when the application will request them.";
+    message += "\r\n(Y/N): ";
+
+    let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), &["y", "n"]).await.is_ok_and(|v| v == "y");
+
+    let mut results = IndexMap::new();
+    if accepted {
+        for permission in permissions.permissions {
+            results.insert(permission, Permission::Allow);
+        }
+    }
+
+    Ok(results)
 }
 
 #[cfg(feature = "xswd")]
@@ -605,6 +654,11 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
             "Add a XSWD relayer to the wallet",
             vec![Arg::new("app_data", ArgType::String)],
             CommandHandler::Async(async_handler!(add_xswd_relayer))
+        ))?;
+        command_manager.add_command(Command::new(
+            "list_xswd_applications",
+            "List XSWD applications connected to the wallet",
+            CommandHandler::Async(async_handler!(list_xswd_applications))
         ))?;
     }
 
@@ -1958,6 +2012,70 @@ async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -
     };
 
     Ok(())
+}
+
+#[cfg(feature = "xswd")]
+async fn list_xswd_applications(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let mut total_apps = 0usize;
+
+    #[cfg(feature = "api_server")]
+    {
+        let api_server = wallet.get_api_server().lock().await;
+        if let Some(xelis_wallet::api::APIServer::XSWD(xswd)) = api_server.as_ref() {
+            let applications = xswd.get_handler().get_applications().read().await;
+            if !applications.is_empty() {
+                manager.message("XSWD server applications:");
+
+                let mut seen = IndexSet::new();
+                for app in applications.values() {
+                    if seen.insert(app.get_id().to_string()) {
+                        print_xswd_application(manager, app).await;
+                        total_apps += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        let xswd = wallet.xswd_relayer().lock().await;
+        if let Some(xswd) = xswd.as_ref() {
+            let applications = xswd.applications().read().await;
+            if !applications.is_empty() {
+                manager.message("XSWD relayer applications:");
+                for app in applications.keys() {
+                    print_xswd_application(manager, app).await;
+                    total_apps += 1;
+                }
+            }
+        }
+    }
+
+    if total_apps == 0 {
+        manager.message("No XSWD applications found");
+    } else {
+        manager.message(format!("Total XSWD applications: {}", total_apps));
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "xswd")]
+async fn print_xswd_application(manager: &CommandManager, app: &AppStateShared) {
+    let permissions = app.get_permissions().lock().await;
+    let permissions_count = permissions.len();
+
+    let url = app.get_url().as_ref().map(|v| v.as_str()).unwrap_or("n/a");
+    let requesting = if app.is_requesting() { "yes" } else { "no" };
+
+    manager.message(format!("- {} ({})", app.get_name(), app.get_id()));
+    manager.message(format!("  Description: {}", app.get_description()));
+    manager.message(format!("  URL: {}", url));
+    manager.message(format!("  Permissions: {}", permissions_count));
+    manager.message(format!("  Requesting: {}", requesting));
 }
 
 // Setup a multisig transaction (a multisig is present on chain, but this wallet is offline so can't sync it)

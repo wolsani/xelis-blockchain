@@ -1488,6 +1488,7 @@ impl XSWDHandler for Arc<Wallet> {
                     error: e.into(),
                 })?;
 
+            debug!("Permission request sent to XSWD handler, waiting for response");
             // Wait on the callback
             let res = receiver.await.map_err(|e| ErrorWithKind {
                 kind: "PERMISSION_WAIT",

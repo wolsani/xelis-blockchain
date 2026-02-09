@@ -286,6 +286,7 @@ pub enum PermissionRequest<'a> {
     Request(&'a RpcRequest)
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum PermissionResult {
     Accept,
     Reject,
