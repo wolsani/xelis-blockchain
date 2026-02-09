@@ -5217,6 +5217,7 @@ dependencies = [
  "serde_json",
  "serde_regex",
  "sha3",
+ "strum",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite-wasm",
