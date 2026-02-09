@@ -120,6 +120,7 @@ use {
         XSWDResponse,
     },
     xelis_common::{
+        error::ErrorWithKind,
         rpc::{
             RPCHandler,
             RpcRequest,
@@ -1070,8 +1071,7 @@ impl Wallet {
         let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
 
         // Build the final transaction
-        let transaction = builder.build(state, self.get_keypair())
-            .map_err(|e| WalletError::Any(e.into()))?;
+        let transaction = builder.build(state, self.get_keypair())?;
 
         let tx_hash = transaction.hash();
         debug!("Transaction created: {} with nonce {} and reference {}", tx_hash, transaction.get_nonce(), transaction.get_reference());
@@ -1084,8 +1084,7 @@ impl Wallet {
     pub fn create_unsigned_transaction(&self, state: &mut TransactionBuilderState, threshold: Option<u8>, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, tx_version: TxVersion) -> Result<UnsignedTransaction, WalletError> {
         trace!("create unsigned transaction");
         let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
-        let unsigned = builder.build_unsigned(state, self.get_keypair())
-            .map_err(|e| WalletError::Any(e.into()))?;
+        let unsigned = builder.build_unsigned(state, self.get_keypair())?;
 
         Ok(unsigned)
     }
@@ -1184,8 +1183,7 @@ impl Wallet {
         };
 
         let builder = TransactionBuilder::new(version, self.get_public_key().clone(), threshold, tx_type, fee);
-        let estimated_fees = builder.estimate_fees(&mut state)
-            .map_err(|e| WalletError::Any(e.into()))?;
+        let estimated_fees = builder.estimate_fees(&mut state)?;
 
         Ok(estimated_fees)
     }
@@ -1472,7 +1470,7 @@ pub enum XSWDEvent {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl XSWDHandler for Arc<Wallet> {
-    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, ErrorWithKind> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             // no other way ?
             let app_state = app_state.clone();
@@ -1484,10 +1482,22 @@ impl XSWDHandler for Arc<Wallet> {
             };
 
             // Send the XSWD Message
-            sender.send(event)?;
+            sender.send(event)
+                .map_err(|e| ErrorWithKind {
+                    kind: "NO_HANDLER",
+                    error: e.into(),
+                })?;
 
             // Wait on the callback
-            return receiver.await?;
+            let res = receiver.await.map_err(|e| ErrorWithKind {
+                kind: "PERMISSION_WAIT",
+                error: e.into(),
+            })?;
+
+            return res.map_err(|error| ErrorWithKind {
+                kind: "PERMISSION_RESULT",
+                error,
+            });
         }
 
         Err(WalletError::NoHandlerAvailable.into())
@@ -1495,20 +1505,32 @@ impl XSWDHandler for Arc<Wallet> {
 
     // there is a lock to acquire so it make it "single threaded"
     // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
-    async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), Error> {
+    async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), ErrorWithKind> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             let (callback, receiver) = oneshot::channel();
             // Send XSWD Message
-            sender.send(XSWDEvent::CancelRequest(app.clone(), callback))?;
+            sender.send(XSWDEvent::CancelRequest(app.clone(), callback))
+                .map_err(|e| ErrorWithKind {
+                    kind: "NO_HANDLER",
+                    error: e.into(),
+                })?;
 
             // Wait on callback
-            return receiver.await?;
+            let res = receiver.await.map_err(|e| ErrorWithKind {
+                kind: "CANCEL_PERMISSION_WAIT",
+                error: e.into(),
+            })?;
+
+            return res.map_err(|error| ErrorWithKind {
+                kind: "CANCEL_PERMISSION_RESULT",
+                error,
+            });
         }
 
         Err(WalletError::NoHandlerAvailable.into())
     }
 
-    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error> {
+    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, ErrorWithKind> {
         Ok(self.get_keypair().get_public_key())
     }
 
@@ -1526,14 +1548,14 @@ impl XSWDHandler for Arc<Wallet> {
                         let params: SubscribeParams<DaemonNotifyEvent> = serde_json::from_value(
                             request.params.take()
                                 .ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::InvalidParams("Missing event parameter")))?
-                        ).map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                        ).map_err(|e| RpcResponseError::new(id.clone(), e))?;
 
                         let event = params.notify.into_owned();
 
                         if request.method == "subscribe" {
                             let stream = api.client()
                                 .subscribe_event_raw(event.clone(), api.capacity()).await
-                                .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                                .map_err(|e| RpcResponseError::new(id.clone(), e))?;
     
                             let response = if id.is_some() {
                                 Some(json!(RpcResponse::new(Cow::Owned(id.clone()), Cow::Owned(json!(true)))))
@@ -1559,13 +1581,13 @@ impl XSWDHandler for Arc<Wallet> {
                     let response = if id.is_some() {
                         let response = api.client()
                             .call_with(&request.method, &request.params).await
-                            .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                            .map_err(|e| RpcResponseError::new(id.clone(), e))?;
     
                         Some(json!(RpcResponse::new(Cow::Owned(id), Cow::Owned(response))))
                     } else {
                         api.client()
                             .notify_with(&request.method, &request.params).await
-                            .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                            .map_err(|e| RpcResponseError::new(id.clone(), e))?;
 
                         None
                     };
