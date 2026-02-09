@@ -274,7 +274,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                 }
             },
             Some(_) = OptionFuture::from(current.as_mut()) => {
-                info!("Finished handling XSWD event, checking if there is pending events in the queue");
+                debug!("Finished handling XSWD event, checking if there is pending events in the queue");
                 current = None;
             }
         }
