@@ -5,6 +5,7 @@ pub mod block;
 pub mod account;
 pub mod api;
 pub mod contract;
+pub mod error;
 
 pub mod utils;
 pub mod config;

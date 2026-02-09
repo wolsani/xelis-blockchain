@@ -1,26 +1,20 @@
 use std::fmt::{Display, Formatter};
 
-#[cfg(feature = "rpc-server")]
-use actix_web::{ResponseError, HttpResponse};
 
 use serde_json::{Value, Error as SerdeError, json};
 use thiserror::Error;
 use anyhow::Error as AnyError;
-use crate::rpc::{Id, JSON_RPC_VERSION};
+use crate::{error::ErrorWithKind, rpc::{Id, JSON_RPC_VERSION}};
 
 #[cfg(feature = "rpc-client")]
 use super::client::JsonRPCError;
 
+#[cfg(feature = "rpc-server")]
+use actix_web::{ResponseError, HttpResponse};
+
 /// Trait for RPC errors that can be converted into an `AnyError` and have a kind string.
 pub trait RPCError: Into<AnyError> {
     fn kind(&self) -> &'static str;
-}
-
-/// A wrapper for any error that includes a kind string for easier serialization in RPC responses.
-#[derive(Debug)]
-pub struct ErrorWithKind {
-    pub kind: &'static str,
-    pub error: AnyError
 }
 
 impl<T: RPCError> From<T> for ErrorWithKind {
@@ -29,21 +23,6 @@ impl<T: RPCError> From<T> for ErrorWithKind {
             kind: value.kind(),
             error: value.into()
         }
-    }
-}
-
-impl From<AnyError> for ErrorWithKind {
-    fn from(value: AnyError) -> Self {
-        Self {
-            kind: "UNSPECIFIED",
-            error: value
-        }
-    }
-}
-
-impl From<ErrorWithKind> for AnyError {
-    fn from(value: ErrorWithKind) -> Self {
-        value.error
     }
 }
 
