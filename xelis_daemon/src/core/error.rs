@@ -1,6 +1,6 @@
 use crate::p2p::P2pError;
 use std::sync::PoisonError;
-use strum::{EnumDiscriminants, IntoDiscriminant};
+use strum::{EnumDiscriminants, IntoDiscriminant, IntoStaticStr};
 use thiserror::Error;
 use tokio::task::JoinError;
 use xelis_common::{
@@ -151,7 +151,8 @@ pub enum DiskContext {
     ContractEventCallback,
 }
 
-#[derive(Error, Debug, EnumDiscriminants)]
+#[derive(Error, Debug, EnumDiscriminants, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum BlockchainError {
     #[error("transaction already executed: {0}")]
     TransactionAlreadyExecuted(Hash),
@@ -405,7 +406,10 @@ impl BlockchainError {
 
 impl From<BlockchainError> for InternalRpcError {
     fn from(value: BlockchainError) -> Self {
-        InternalRpcError::AnyError(value.into())
+        InternalRpcError::Any {
+            kind: (&value).into(),
+            error: value.into()
+        }
     }
 }
 
