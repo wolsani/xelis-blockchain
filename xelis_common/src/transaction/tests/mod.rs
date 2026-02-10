@@ -37,7 +37,7 @@ use crate::{
             derive_shared_key_from_opening,
             PlaintextData
         },
-        verify::{NoZKPCache, VerificationError, ZKPCache},
+        verify::{NoZKPCache, VerificationError, VerificationStateError, ZKPCache},
         BurnPayload,
         MultiSigPayload,
         Reference,
@@ -286,7 +286,7 @@ async fn test_tx_verify_with_zkp_cache() {
         .nonce = 0;
 
     // Now, the chain state balances has changed, it should error even if the TX is in cache
-    assert!(matches!(tx.verify(&hash, &mut state, &DummyCache).await, Err(VerificationError::Proof(ProofVerificationError::GenericProof))));
+    assert!(matches!(tx.verify(&hash, &mut state, &DummyCache).await, Err(VerificationStateError::VerificationError(VerificationError::Proof(ProofVerificationError::GenericProof)))));
 
     // But should be fine for a clean state
     assert!(tx.verify(&hash, &mut clean_state, &DummyCache).await.is_ok());

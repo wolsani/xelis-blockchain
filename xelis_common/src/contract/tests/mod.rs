@@ -13,7 +13,7 @@ use crate::{
         ContractMetadata,
         ContractModule,
         Source,
-        vm::{self, ContractCaller, ContractError, InvokeContract}
+        vm::{self, ContractCaller, ContractStateError, InvokeContract}
     },
     crypto::Hash,
     transaction::{tests::MockChainState, verify::BlockchainContractState}
@@ -80,7 +80,7 @@ pub async fn invoke_contract(
     contract: &Hash,
     entry: InvokeContract,
     params: Vec<ValueCell>,
-) -> Result<vm::ExecutionResult, ContractError<anyhow::Error>> {
+) -> Result<vm::ExecutionResult, ContractStateError<anyhow::Error>> {
     vm::invoke_contract(
         ContractCaller::System,
         state,

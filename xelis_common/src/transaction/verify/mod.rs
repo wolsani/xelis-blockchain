@@ -336,9 +336,9 @@ impl Transaction {
         deposits: &'a IndexMap<Hash, ContractDeposit>,
         max_gas: u64,
         private_deposits: bool,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), VerificationStateError<E>> {
         if deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
-            return Err(VerificationError::DepositCount);
+            return Err(VerificationError::DepositCount.into());
         }
 
         if max_gas > MAX_GAS_USAGE_PER_TX {
@@ -349,7 +349,7 @@ impl Transaction {
             match deposit {
                 ContractDeposit::Public(amount) => {
                     if *amount == 0 {
-                        return Err(VerificationError::InvalidFormat);
+                        return Err(VerificationError::InvalidFormat.into());
                     }
                 },
                 ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
@@ -357,7 +357,7 @@ impl Transaction {
                     // if private deposits aren't allowed
                     // returns an error
                     if !private_deposits {
-                        return Err(VerificationError::InvalidFormat);
+                        return Err(VerificationError::InvalidFormat.into());
                     }
 
                     let decompressed = DecompressedDepositCt {
@@ -388,11 +388,11 @@ impl Transaction {
         dest_pubkey: &PublicKey,
         deposits_decompressed: &HashMap<&Hash, DecompressedDepositCt>,
         deposits: &IndexMap<Hash, ContractDeposit>,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), VerificationStateError<E>> {
         trace!("verify contract deposits");
 
         if deposits.len() > u8::MAX as usize {
-            return Err(VerificationError::InvalidFormat)
+            return Err(VerificationError::InvalidFormat.into());
         }
 
         for (asset, deposit) in deposits {
@@ -410,7 +410,7 @@ impl Transaction {
                 } => {
                     // TODO: currently, private deposits are disabled
                     if true {
-                        return Err(VerificationError::InvalidFormat);
+                        return Err(VerificationError::InvalidFormat.into());
                     }
 
                     transcript.append_commitment(b"deposit_commitment", commitment);
@@ -451,7 +451,7 @@ impl Transaction {
         transcript: &mut Transcript,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), VerificationStateError<E>> {
         trace!("verify source commitments");
 
         for (commitment, new_source_commitment) in self
@@ -466,7 +466,7 @@ impl Transaction {
             // Retrieve the balance of the sender
             let source_verification_ciphertext = state
                 .get_sender_balance(&self.source, commitment.get_asset(), &self.reference).await
-                .map_err(VerificationError::State)?;
+                .map_err(VerificationStateError::State)?;
 
             let source_ct_compressed = source_verification_ciphertext.compress();
 
@@ -497,7 +497,7 @@ impl Transaction {
                     commitment.get_asset(),
                     output,
                 ).await
-                .map_err(VerificationError::State)?;
+                .map_err(VerificationStateError::State)?;
         }
 
         Ok(())
@@ -508,31 +508,30 @@ impl Transaction {
         tx_hash: &'a Hash,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), VerificationStateError<E>> {
         let mut transfers_decompressed = Vec::new();
         let mut deposits_decompressed = HashMap::new();
 
         trace!("verify fee to pay");
         // Verify the required fee, if fee_limit is not fully used, refund the left-over later
         let refund = state.handle_tx_fee(self, tx_hash).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         trace!("Pre-verifying transaction on state");
         state.pre_verify_tx(&self).await
-            .map_err(VerificationError::State)?;
-
+            .map_err(VerificationStateError::State)?;
         // First, check the nonce
         let account_nonce = state.get_account_nonce(&self.source).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         if account_nonce != self.nonce {
-            return Err(VerificationError::InvalidNonce(tx_hash.clone(), self.nonce, account_nonce));
+            return Err(VerificationError::InvalidNonce(tx_hash.clone(), self.nonce, account_nonce).into());
         }
 
         // Nonce is valid, update it for next transactions if any
         state
             .update_account_nonce(&self.source, self.nonce + 1).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         match &self.data {
             TransactionType::Transfers(transfers) => {
@@ -547,8 +546,8 @@ impl Transaction {
             TransactionType::MultiSig(payload) => {
                 let is_reset = payload.threshold == 0 && payload.participants.is_empty();
                 // If the multisig is reset, we need to check if it was already configured
-                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
-                    return Err(VerificationError::MultiSigNotConfigured);
+                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationStateError::State)?.is_none() {
+                    return Err(VerificationError::MultiSigNotConfigured.into());
                 }
             },
             TransactionType::InvokeContract(payload) => {
@@ -561,14 +560,14 @@ impl Transaction {
 
                 // We need to load the contract module if not already in cache
                 if !self.is_contract_available(state, &payload.contract).await? {
-                    return Err(VerificationError::ContractNotFound);
+                    return Err(VerificationError::ContractNotFound.into());
                 }
 
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
 
                 if !module.is_entry_chunk(payload.entry_id as usize) {
-                    return Err(VerificationError::InvalidInvokeContract);
+                    return Err(VerificationError::InvalidInvokeContract.into());
                 }
 
                 let validator = ModuleValidator::new(module, environment);
@@ -587,7 +586,7 @@ impl Transaction {
                 }
 
                 let environment = state.get_environment(payload.contract.version).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
 
                 let validator = ModuleValidator::new(&payload.contract.module, environment);
                 validator.verify()?;
@@ -628,7 +627,7 @@ impl Transaction {
                     Cow::Borrowed(&self.source),
                     Cow::Borrowed(&XELIS_ASSET)
                 ).await
-                .map_err(VerificationError::State)?;
+                .map_err(VerificationStateError::State)?;
 
             *balance += Scalar::from(refund);
         }
@@ -642,9 +641,9 @@ impl Transaction {
         &'a self,
         state: &mut B,
         contract: &'a Hash,
-    ) -> Result<bool, VerificationError<E>> {
+    ) -> Result<bool, VerificationStateError<E>> {
         state.load_contract_module(Cow::Borrowed(contract)).await
-            .map_err(VerificationError::State)
+            .map_err(VerificationStateError::State)
     }
 
     // internal, does not verify the range proof
@@ -654,38 +653,38 @@ impl Transaction {
         tx_hash: &'a Hash,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
-    ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
+    ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationStateError<E>>
     {
         trace!("Pre-verifying transaction");
         if !self.has_valid_version_format() {
-            return Err(VerificationError::InvalidFormat);
+            return Err(VerificationError::InvalidFormat.into());
         }
 
         trace!("verify fee");
         // Verify the required fee, if fee_limit is not fully used, refund the left-over later
         let refund = state.handle_tx_fee(self, tx_hash).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         trace!("Pre-verifying transaction on state");
         state.pre_verify_tx(&self).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         // First, check the nonce
         let account_nonce = state.get_account_nonce(&self.source).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         if account_nonce != self.nonce {
-            return Err(VerificationError::InvalidNonce(tx_hash.clone(), account_nonce, self.nonce));
+            return Err(VerificationError::InvalidNonce(tx_hash.clone(), account_nonce, self.nonce).into());
         }
 
         // Nonce is valid, update it for next transactions if any
         state
             .update_account_nonce(&self.source, self.nonce + 1).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         if !self.verify_commitment_assets() {
             debug!("Invalid commitment assets");
-            return Err(VerificationError::Commitments);
+            return Err(VerificationError::Commitments.into());
         }
 
         let mut transfers_decompressed: Vec<_> = Vec::new();
@@ -694,7 +693,7 @@ impl Transaction {
             TransactionType::Transfers(transfers) => {
                 if transfers.len() > MAX_TRANSFER_COUNT || transfers.is_empty() {
                     debug!("incorrect transfers size: {}", transfers.len());
-                    return Err(VerificationError::TransferCount);
+                    return Err(VerificationError::TransferCount.into());
                 }
 
                 let mut extra_data_size = 0;
@@ -702,13 +701,13 @@ impl Transaction {
                 for transfer in transfers.iter() {
                     if *transfer.get_destination() == self.source {
                         debug!("sender cannot be the receiver in the same TX");
-                        return Err(VerificationError::SenderIsReceiver);
+                        return Err(VerificationError::SenderIsReceiver.into());
                     }
 
                     if let Some(extra_data) = transfer.get_extra_data() {
                         let size = extra_data.size();
                         if size > EXTRA_DATA_LIMIT_SIZE {
-                            return Err(VerificationError::TransferExtraDataSize);
+                            return Err(VerificationError::TransferExtraDataSize.into());
                         }
                         extra_data_size += size;
                     }
@@ -721,7 +720,7 @@ impl Transaction {
     
                 // Check the sum of extra data size
                 if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                    return Err(VerificationError::TransactionExtraDataSize);
+                    return Err(VerificationError::TransactionExtraDataSize.into());
                 }
             },
             TransactionType::Burn(payload) => {
@@ -729,41 +728,41 @@ impl Transaction {
                 let amount = payload.amount;
 
                 if amount == 0 {
-                    return Err(VerificationError::InvalidFormat);
+                    return Err(VerificationError::InvalidFormat.into());
                 }
 
                 let total = fee.checked_add(amount)
                     .ok_or(VerificationError::InvalidFormat)?;
 
                 if total < fee || total < amount {
-                    return Err(VerificationError::InvalidFormat);
+                    return Err(VerificationError::InvalidFormat.into());
                 }
             },
             TransactionType::MultiSig(payload) => {
                 if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
-                    return Err(VerificationError::MultiSigParticipants);
+                    return Err(VerificationError::MultiSigParticipants.into());
                 }
 
                 // Threshold should be less than or equal to the number of participants
                 if payload.threshold as usize > payload.participants.len() {
-                    return Err(VerificationError::MultiSigThreshold);
+                    return Err(VerificationError::MultiSigThreshold.into());
                 }
 
                 // If the threshold is set to 0, while we have participants, its invalid
                 // Threshold should be always > 0
                 if payload.threshold == 0 && !payload.participants.is_empty() {
-                    return Err(VerificationError::MultiSigThreshold);
+                    return Err(VerificationError::MultiSigThreshold.into());
                 }
 
                 // You can't contains yourself in the participants
                 if payload.participants.contains(self.get_source()) {
-                    return Err(VerificationError::MultiSigParticipants);
+                    return Err(VerificationError::MultiSigParticipants.into());
                 }
 
                 let is_reset = payload.threshold == 0 && payload.participants.is_empty();
                 // If the multisig is reset, we need to check if it was already configured
-                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
-                    return Err(VerificationError::MultiSigNotConfigured);
+                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationStateError::State)?.is_none() {
+                    return Err(VerificationError::MultiSigNotConfigured.into());
                 }
             },
             TransactionType::InvokeContract(payload) => {
@@ -777,14 +776,14 @@ impl Transaction {
 
                 // We need to load the contract module if not already in cache
                 if !self.is_contract_available(state, &payload.contract).await? {
-                    return Err(VerificationError::ContractNotFound);
+                    return Err(VerificationError::ContractNotFound.into());
                 }
 
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
 
                 if !module.is_entry_chunk(payload.entry_id as usize) {
-                    return Err(VerificationError::InvalidInvokeContract);
+                    return Err(VerificationError::InvalidInvokeContract.into());
                 }
 
                 let validator = ModuleValidator::new(module, environment);
@@ -804,7 +803,7 @@ impl Transaction {
                 }
 
                 let environment = state.get_environment(payload.contract.version).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
 
                 let validator = ModuleValidator::new(&payload.contract.module, environment);
                 validator.verify()?;
@@ -829,17 +828,17 @@ impl Transaction {
         let bytes = self.to_bytes();
         if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &source_decompressed) {
             debug!("transaction signature is invalid");
-            return Err(VerificationError::InvalidSignature);
+            return Err(VerificationError::InvalidSignature.into());
         }
 
         // 0.b Verify multisig
-        if let Some(config) = state.get_multisig_state(&self.source).await.map_err(VerificationError::State)? {
+        if let Some(config) = state.get_multisig_state(&self.source).await.map_err(VerificationStateError::State)? {
             let Some(multisig) = self.get_multisig() else {
-                return Err(VerificationError::MultiSigNotFound);
+                return Err(VerificationError::MultiSigNotFound.into());
             };
 
             if (config.threshold as usize) != multisig.len() || multisig.len() > MAX_MULTISIG_PARTICIPANTS {
-                return Err(VerificationError::MultiSigParticipants);
+                return Err(VerificationError::MultiSigParticipants.into());
             }
 
             // Multisig are based on the Tx data, without the final signature
@@ -849,7 +848,7 @@ impl Transaction {
             // We also need to get rid of the final signature (64 bytes)
             let size = 1 + 1 + SIGNATURE_SIZE + multisig.len() * (SIGNATURE_SIZE + 1);
             if  size >= bytes.len() {
-                return Err(VerificationError::InvalidFormat);
+                return Err(VerificationError::InvalidFormat.into());
             }
 
             let hash = hash(&bytes[..bytes.len() - size]);
@@ -857,16 +856,16 @@ impl Transaction {
                 // A participant can't sign more than once because of the IndexSet (SignatureId impl Hash on id)
                 let index = sig.id as usize;
                 let Some(key) = config.participants.get_index(index) else {
-                    return Err(VerificationError::MultiSigParticipants);
+                    return Err(VerificationError::MultiSigParticipants.into());
                 };
 
                 let decompressed = key.decompress().map_err(ProofVerificationError::from)?;
                 if !sig.signature.verify(hash.as_bytes(), &decompressed) {
-                    return Err(VerificationError::InvalidSignature);
+                    return Err(VerificationError::InvalidSignature.into());
                 }
             }
         } else if self.get_multisig().is_some() {
-            return Err(VerificationError::MultiSigNotConfigured);
+            return Err(VerificationError::MultiSigNotConfigured.into());
         }
 
         // 1. Verify CommitmentEqProofs
@@ -905,7 +904,7 @@ impl Transaction {
                             Cow::Borrowed(transfer.get_destination()),
                             Cow::Borrowed(transfer.get_asset())
                         ).await
-                        .map_err(VerificationError::State)?;
+                        .map_err(VerificationStateError::State)?;
 
                     let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
                     *current_balance += receiver_ct;
@@ -950,7 +949,7 @@ impl Transaction {
 
                 // Setup the multisig
                 state.set_multisig_state(&self.source, payload).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
             },
             TransactionType::InvokeContract(payload) => {                
                 let dest_pubkey = PublicKey::from_hash(&payload.contract);
@@ -975,7 +974,7 @@ impl Transaction {
             TransactionType::DeployContract(payload) => {
                 // Verify that if we have a constructor, we must have an invoke, and vice-versa
                 if payload.invoke.is_none() != payload.contract.module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_none() {
-                    return Err(VerificationError::InvalidFormat);
+                    return Err(VerificationError::InvalidFormat.into());
                 }
 
                 if let Some(invoke) = payload.invoke.as_ref() {
@@ -999,7 +998,7 @@ impl Transaction {
                 }
 
                 state.set_contract_module(tx_hash, &payload.contract).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
             }
         }
 
@@ -1038,7 +1037,7 @@ impl Transaction {
                     Cow::Borrowed(&self.source),
                     Cow::Borrowed(&XELIS_ASSET)
                 ).await
-                .map_err(VerificationError::State)?;
+                .map_err(VerificationStateError::State)?;
 
             *balance += Scalar::from(refund);
         }
@@ -1055,7 +1054,7 @@ impl Transaction {
         txs: impl Iterator<Item = &'a (Arc<Transaction>, H)>,
         state: &mut B,
         cache: &C,
-    ) -> Result<(), VerificationError<E>>
+    ) -> Result<(), VerificationStateError<E>>
     where
         H: AsRef<Hash> + 'a,
         B: BlockchainVerificationState<'a, E>,
@@ -1074,7 +1073,7 @@ impl Transaction {
             // because a TX is immutable, we can just verify the mutable parts
             // (balance & nonce related)
             let dynamic_parts_only = cache.is_already_verified(hash).await
-                .map_err(VerificationError::State)?;
+                .map_err(VerificationStateError::State)?;
             if dynamic_parts_only {
                 debug!("TX {} is known from ZKPCache, verifying dynamic parts only", hash);
                 tx.verify_dynamic_parts(hash, state, &mut sigma_batch_collector).await?;
@@ -1134,14 +1133,14 @@ impl Transaction {
         tx_hash: &'a Hash,
         state: &mut B,
         cache: &C,
-    ) -> Result<(), VerificationError<E>>
+    ) -> Result<(), VerificationStateError<E>>
     where
         B: BlockchainVerificationState<'a, E>,
         C: ZKPCache<E>
     {
         let mut sigma_batch_collector = BatchCollector::default();
         let dynamic_parts_only = cache.is_already_verified(tx_hash).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
         let res = if dynamic_parts_only {
             debug!("TX {} is known from ZKPCache, verifying dynamic parts only", tx_hash);
             self.verify_dynamic_parts(tx_hash, state, &mut sigma_batch_collector).await?;
@@ -1185,16 +1184,16 @@ impl Transaction {
         tx_hash: &'a Hash,
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), VerificationStateError<E>> {
         trace!("Applying transaction data");
 
         // Handle the fee
         state.handle_tx_fee(self, tx_hash).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         // Update nonce
         state.update_account_nonce(self.get_source(), self.nonce + 1).await
-            .map_err(VerificationError::State)?;
+            .map_err(VerificationStateError::State)?;
 
         // Apply receiver balances
         match &self.data {
@@ -1206,7 +1205,7 @@ impl Transaction {
                             Cow::Borrowed(transfer.get_destination()),
                             Cow::Borrowed(transfer.get_asset()),
                         ).await
-                        .map_err(VerificationError::State)?;
+                        .map_err(VerificationStateError::State)?;
     
                     let receiver_ct = transfer
                         .get_ciphertext(Role::Receiver)
@@ -1218,10 +1217,10 @@ impl Transaction {
             },
             TransactionType::Burn(payload) => {
                 state.add_burned_coins(&payload.asset, payload.amount).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
             },
             TransactionType::MultiSig(payload) => {
-                state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
+                state.set_multisig_state(&self.source, payload).await.map_err(VerificationStateError::State)?;
             },
             TransactionType::InvokeContract(payload) => {
                 if self.is_contract_available(state, &payload.contract).await? {
@@ -1247,7 +1246,7 @@ impl Transaction {
             },
             TransactionType::DeployContract(payload) => {
                 state.set_contract_module(tx_hash, &payload.contract).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
 
                 if let Some(invoke) = payload.invoke.as_ref() {
                     let result = vm::invoke_contract(
@@ -1268,13 +1267,13 @@ impl Transaction {
                     if !result.is_success() {
                         debug!("Contract deploy for {} failed", tx_hash);
                         state.remove_contract_module(tx_hash).await
-                            .map_err(VerificationError::State)?;
+                            .map_err(VerificationStateError::State)?;
                     }
                 }
 
                 // Track the burned contract
                 state.add_burned_fee(BURN_PER_CONTRACT).await
-                    .map_err(VerificationError::State)?;
+                    .map_err(VerificationStateError::State)?;
             }
         }
 
@@ -1286,7 +1285,7 @@ impl Transaction {
         self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), VerificationStateError<E>> {
         let mut transfers_decompressed = Vec::new();
         let mut deposits_decompressed = HashMap::new();
         match &self.data {
@@ -1327,7 +1326,7 @@ impl Transaction {
                     &self.source,
                     asset,
                     &self.reference,
-                ).await.map_err(VerificationError::State)?;
+                ).await.map_err(VerificationStateError::State)?;
 
             let output = self.get_sender_output_ct(asset, &transfers_decompressed, &deposits_decompressed)
                 .map_err(ProofVerificationError::from)?;
@@ -1340,7 +1339,7 @@ impl Transaction {
                 &self.source,
                 commitment.get_asset(),
                 output,
-            ).await.map_err(VerificationError::State)?;
+            ).await.map_err(VerificationStateError::State)?;
         }
 
         self.apply(tx_hash, state, &deposits_decompressed).await
@@ -1353,7 +1352,7 @@ impl Transaction {
         self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), VerificationStateError<E>> {
         trace!("apply with partial verify");
         let mut sigma_batch_collector = BatchCollector::default();
 
@@ -1415,7 +1414,7 @@ impl Transaction {
             // Retrieve the balance of the sender
             let mut source_verification_ciphertext = state
                 .get_sender_balance(&self.source, commitment.get_asset(), &self.reference).await
-                .map_err(VerificationError::State)?
+                .map_err(VerificationStateError::State)?
                 .clone();
 
             let source_ct_compressed = source_verification_ciphertext.compress();
@@ -1454,7 +1453,7 @@ impl Transaction {
             let current_ciphertext = state
                 .get_sender_balance(&self.source, asset, &self.reference)
                 .await
-                .map_err(VerificationError::State)?;
+                .map_err(VerificationStateError::State)?;
             *current_ciphertext = source_verification_ciphertext;
 
             // Update sender output for asset
@@ -1464,7 +1463,7 @@ impl Transaction {
                     asset,
                     output,
                 ).await
-                .map_err(VerificationError::State)?;
+                .map_err(VerificationStateError::State)?;
         }
 
         self.apply(tx_hash, state, &deposits_decompressed).await
