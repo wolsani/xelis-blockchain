@@ -311,7 +311,7 @@ where
 // Built-in "schema" method to get all registered methods and their schemas
 async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> Result<Value, InternalRpcError> {
     let rpc_handler: &RPCHandler<T> = context.get()
-        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context")).unwrap();
+        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
 
     let methods = rpc_handler.methods.iter()
         .map(|(name, handler)| RpcMethodInfo {
