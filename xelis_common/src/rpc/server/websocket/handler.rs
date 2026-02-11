@@ -16,9 +16,10 @@ use crate::{
         RpcResponseError,
         RPCHandler,
         RpcResponse,
+        Events,
     }
 };
-use super::{WebSocketSessionShared, WebSocketHandler, events::Events};
+use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
 pub struct EventWebSocketHandler<T, E>

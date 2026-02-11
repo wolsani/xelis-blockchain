@@ -1,6 +1,5 @@
 mod handler;
 mod http_request;
-mod events;
 
 use std::{
     collections::HashSet,
@@ -53,7 +52,6 @@ use crate::{
 pub use self::{
     handler::EventWebSocketHandler,
     http_request::HttpRequest,
-    events::*
 };
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
