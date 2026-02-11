@@ -55,3 +55,8 @@ tokio-multi-thread = ["xelis_common/tokio-multi-thread"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "xelis_wallet"
+path = "src/main.rs"
+required-features = ["cli"]
