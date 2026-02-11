@@ -951,7 +951,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                                 // if default is not enabled,
                                 // return an error about supply
                                 if !default {
-                                    return Err(BlockchainError::NoCirculatingSupply(asset.clone()))
+                                    return Err(BlockchainError::UnknownAssetCirculatingSupply(asset.clone()))
                                 }
 
                                 (VersionedState::New, 0)

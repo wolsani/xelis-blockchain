@@ -512,7 +512,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Rewinded chain until topoheight {}", topoheight);
         let res = self.handle_blocks_from_chain_validator(peer, chain_validator, snapshot).await;
 
-        if let Err(BlockchainError::ErrorOnP2p(e)) = &res {
+        if let Err(BlockchainError::P2pError(e)) = &res {
             debug!("Mark {} as sync chain from validator failed: {}", peer, e);
             peer.set_sync_chain_failed(true);
 

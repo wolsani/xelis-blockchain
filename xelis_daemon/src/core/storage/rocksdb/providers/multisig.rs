@@ -93,7 +93,7 @@ impl MultiSigProvider for RocksStorage {
         trace!("get last multisig for {}", account.as_address(self.is_mainnet()));
         let account = self.get_account_type(account)?;
         let topoheight = account.multisig_pointer
-            .ok_or(BlockchainError::NoMultisig)?;
+            .ok_or(BlockchainError::MultisigNotFound)?;
 
         let key = Self::get_versioned_multisig_key(account.id, topoheight);
         let version = self.load_from_disk(Column::VersionedMultisig, &key)?;

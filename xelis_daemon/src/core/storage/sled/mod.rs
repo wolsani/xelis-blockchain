@@ -1,6 +1,7 @@
 mod migrations;
 mod providers;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Either;
 use crate::core::{
@@ -242,49 +243,55 @@ impl SledStorage {
             .cache_capacity(internal_cache_size)
             .mode(mode.into());
 
-        let sled = config.open()?;
+        let sled = config.open()
+            .context("Failed to open sled database")?;
+
+        fn open_tree(sled: &sled::Db, name: &str) -> Result<Tree, anyhow::Error> {
+            sled.open_tree(name)
+                .with_context(|| format!("Failed to open sled tree {}", name))
+        }
 
         let mut storage = Self {
             network,
-            transactions: sled.open_tree("transactions")?,
-            txs_executed: sled.open_tree("txs_executed")?,
-            blocks_execution_order: sled.open_tree("blocks_execution_order")?,
-            blocks: sled.open_tree("blocks")?,
-            blocks_at_height: sled.open_tree("blocks_at_height")?,
-            extra: sled.open_tree("extra")?,
-            topo_by_hash: sled.open_tree("topo_at_hash")?,
-            hash_at_topo: sled.open_tree("hash_at_topo")?,
-            cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
-            difficulty_covariance: sled.open_tree("difficulty_covariance")?,
-            block_size_ema: sled.open_tree("block_size_ema")?,
-            assets: sled.open_tree("assets")?,
-            versioned_assets: sled.open_tree("versioned_assets")?,
-            nonces: sled.open_tree("nonces")?,
-            topoheight_metadata: sled.open_tree("topoheight_metadata")?,
-            difficulty: sled.open_tree("difficulty")?,
-            tx_blocks: sled.open_tree("tx_blocks")?,
-            versioned_nonces: sled.open_tree("versioned_nonces")?,
-            balances: sled.open_tree("balances")?,
-            multisig: sled.open_tree("multisig")?,
-            versioned_multisigs: sled.open_tree("versioned_multisig")?,
-            versioned_balances: sled.open_tree("versioned_balances")?,
-            merkle_hashes: sled.open_tree("merkle_hashes")?,
-            registrations: sled.open_tree("registrations")?,
-            registrations_prefixed: sled.open_tree("registrations_prefixed")?,
-            contracts: sled.open_tree("contracts")?,
-            versioned_contracts: sled.open_tree("versioned_contracts")?,
-            contracts_data: sled.open_tree("contracts_data")?,
-            versioned_contracts_data: sled.open_tree("versioned_contracts_data")?,
-            contracts_balances: sled.open_tree("contracts_balances")?,
-            versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
-            contracts_logs: sled.open_tree("contracts_logs")?,
-            contracts_scheduled_executions: sled.open_tree("contracts_scheduled_executions")?,
-            contracts_scheduled_executions_registrations: sled.open_tree("contracts_scheduled_executions_registrations")?,
-            assets_supply: sled.open_tree("assets_supply")?,
-            contracts_event_callbacks: sled.open_tree("contracts_event_callbacks")?,
-            versioned_contracts_event_callbacks: sled.open_tree("versioned_contracts_event_callbacks")?,
-            versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
-            contracts_transactions: sled.open_tree("contracts_transactions")?,
+            transactions: open_tree(&sled, "transactions")?,
+            txs_executed: open_tree(&sled, "txs_executed")?,
+            blocks_execution_order: open_tree(&sled, "blocks_execution_order")?,
+            blocks: open_tree(&sled, "blocks")?,
+            blocks_at_height: open_tree(&sled, "blocks_at_height")?,
+            extra: open_tree(&sled, "extra")?,
+            topo_by_hash: open_tree(&sled, "topo_at_hash")?,
+            hash_at_topo: open_tree(&sled, "hash_at_topo")?,
+            cumulative_difficulty: open_tree(&sled, "cumulative_difficulty")?,
+            difficulty_covariance: open_tree(&sled, "difficulty_covariance")?,
+            block_size_ema: open_tree(&sled, "block_size_ema")?,
+            assets: open_tree(&sled, "assets")?,
+            versioned_assets: open_tree(&sled, "versioned_assets")?,
+            nonces: open_tree(&sled, "nonces")?,
+            topoheight_metadata: open_tree(&sled, "topoheight_metadata")?,
+            difficulty: open_tree(&sled, "difficulty")?,
+            tx_blocks: open_tree(&sled, "tx_blocks")?,
+            versioned_nonces: open_tree(&sled, "versioned_nonces")?,
+            balances: open_tree(&sled, "balances")?,
+            multisig: open_tree(&sled, "multisig")?,
+            versioned_multisigs: open_tree(&sled, "versioned_multisig")?,
+            versioned_balances: open_tree(&sled, "versioned_balances")?,
+            merkle_hashes: open_tree(&sled, "merkle_hashes")?,
+            registrations: open_tree(&sled, "registrations")?,
+            registrations_prefixed: open_tree(&sled, "registrations_prefixed")?,
+            contracts: open_tree(&sled, "contracts")?,
+            versioned_contracts: open_tree(&sled, "versioned_contracts")?,
+            contracts_data: open_tree(&sled, "contracts_data")?,
+            versioned_contracts_data: open_tree(&sled, "versioned_contracts_data")?,
+            contracts_balances: open_tree(&sled, "contracts_balances")?,
+            versioned_contracts_balances: open_tree(&sled, "versioned_contracts_balances")?,
+            contracts_logs: open_tree(&sled, "contracts_logs")?,
+            contracts_scheduled_executions: open_tree(&sled, "contracts_scheduled_executions")?,
+            contracts_scheduled_executions_registrations: open_tree(&sled, "contracts_scheduled_executions_registrations")?,
+            assets_supply: open_tree(&sled, "assets_supply")?,
+            contracts_event_callbacks: open_tree(&sled, "contracts_event_callbacks")?,
+            versioned_contracts_event_callbacks: open_tree(&sled, "versioned_contracts_event_callbacks")?,
+            versioned_assets_supply: open_tree(&sled, "versioned_assets_supply")?,
+            contracts_transactions: open_tree(&sled, "contracts_transactions")?,
             db: sled,
             cache: StorageCache::new(cache_size),
             snapshot: None,
@@ -778,13 +785,16 @@ impl Storage for SledStorage {
 
     // Returns the current size on disk in bytes
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError> {
-        Ok(self.db.size_on_disk()?)
+        let size = self.db.size_on_disk()
+            .context("Failed to get size on disk")?;
+        Ok(size)
     }
 
     async fn stop(&mut self) -> Result<(), BlockchainError> {
         info!("Stopping Storage...");
         info!("Flushing Sled database");
-        self.db.flush_async().await?;
+        self.db.flush_async().await
+            .context("Failed to flush sled database")?;
         info!("Sled database flushed");
         Ok(())
     }
@@ -794,7 +804,8 @@ impl Storage for SledStorage {
 
         let mut size = 0;
         for tree in self.db.tree_names() {
-            let tree = self.db.open_tree(tree)?;
+            let tree = self.db.open_tree(tree)
+                .context("Failed to open sled tree")?;
             debug!("Estimating size for tree {}", String::from_utf8_lossy(&tree.name()));
             for el in Self::iter_raw(self.snapshot.as_ref(), &tree) {
                 let (key, value) = el?;
@@ -807,7 +818,9 @@ impl Storage for SledStorage {
 
     async fn flush(&mut self) -> Result<(), BlockchainError> {
         trace!("flush sled");
-        let n = self.db.flush_async().await?;
+        let n = self.db.flush_async().await
+            .context("Failed to flush sled database")?;
+
         debug!("Flushed {} bytes", n);
         Ok(())
     }

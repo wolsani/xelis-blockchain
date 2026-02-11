@@ -21,7 +21,8 @@ use xelis_common::{
     rpc::InternalRpcError,
     serializer::ReaderError,
     time::TimestampMillis,
-    transaction::verify::VerificationError,
+    transaction::verify::{VerificationError, VerificationStateError},
+    contract::vm::ContractError,
     utils::format_xelis
 };
 use human_bytes::human_bytes;
@@ -164,10 +165,8 @@ pub enum BlockchainError {
     TipTooFarBack,
     #[error("transaction has an invalid reference: block height {0} is higher than stable height {1}")]
     InvalidReferenceBlockHeight(u64, u64),
-    #[error("no circulating supply for asset {0}")]
-    NoCirculatingSupply(Hash),
-    #[error(transparent)]
-    JoinError(#[from] JoinError),
+    #[error("unknown circulating supply for asset {0}")]
+    UnknownAssetCirculatingSupply(Hash),
     #[error("Invalid configuration provided")]
     InvalidConfig,
     #[error("Invalid data on disk: corrupted")]
@@ -178,20 +177,12 @@ pub enum BlockchainError {
     ContractAlreadyExists,
     #[error("Contract not found: {}", _0)]
     ContractNotFound(Hash),
-    #[error("Contract module not found: {}", _0)]
-    ContractModuleNotFound(Hash),
-    #[error("Invalid tip order for block {}, expected {}, got {}", _0, _1, _2)]
-    InvalidTipsOrder(Hash, Hash, Hash),
     #[error("commit point already started")]
     CommitPointAlreadyStarted,
     #[error("commit point not started")]
     CommitPointNotStarted,
-    #[error("no multisig found")]
-    NoMultisig,
-    #[error("Versioned data not found in disk")]
-    VersionedNotFound,
-    #[error("Block is not ordered")]
-    BlockNotOrdered,
+    #[error("multisig not found")]
+    MultisigNotFound,
     #[error("Invalid balances merkle hash for block {}, expected {}, got {}", _0, _1, _2)]
     InvalidBalancesMerkleHash(Hash, Hash, Hash),
     #[error("Invalid tips merkle hash for block {}, expected {}, got {}", _0, _1, _2)]
@@ -212,10 +203,6 @@ pub enum BlockchainError {
     InvalidDifficulty,
     #[error("Tx nonce {} already used by Tx {}", _0, _1)]
     TxNonceAlreadyUsed(Nonce, Hash),
-    #[error("Invalid hash, expected {}, got {}", _0, _1)]
-    InvalidHash(Hash, Hash),
-    #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]
-    InvalidPreviousBlockHash(Hash, Hash),
     #[error("Block size is more than limit, expected maximum: {}, got {}", _0, _1)]
     InvalidBlockSize(usize, usize),
     #[error("Block contains invalid txs count: expected {}, got {} txs.", _0, _1)]
@@ -226,74 +213,30 @@ pub enum BlockchainError {
     TxNotFound(Hash),
     #[error("Tx {} already in mempool", _0)]
     TxAlreadyInMempool(Hash),
-    #[error("Transaction has an invalid reference: block hash not found")]
-    InvalidReferenceHash,
     #[error("Transaction has an invalid reference: topoheight {0} is higher than our topoheight {1}")]
     InvalidReferenceTopoheight(u64, u64),
     #[error("No previous balance found")]
     NoPreviousBalanceFound,
-    #[error("Transaction has an invalid reference: no balance version found in stable chain")]
-    NoStableReferenceFound,
-    #[error("Tx {} is already in block", _0)]
-    TxAlreadyInBlock(Hash),
     #[error("Invalid Tx fee, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     InvalidTxFee(u64, u64),
-    #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
-    FeesToLowToOverride(u64, u64),
     #[error("No account found for {}", _0)]
     AccountNotFound(Address),
-    #[error("Invalid transaction nonce: {}, account nonce is: {}", _0, _1)]
-    InvalidTransactionNonce(Nonce, Nonce),
-    #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
-    InvalidTransactionToSender(Hash),
-    #[error("Invalid extra data in this transaction")]
-    InvalidTransactionExtraData,
-    #[error("Invalid extra data in transfer")]
-    InvalidTransferExtraData,
     #[error("Invalid network state")]
     InvalidNetwork,
     #[error("Error while retrieving block by hash: {} not found", _0)]
     BlockNotFound(Hash),
-    #[error("Error while retrieving block by height: {} not found", _0)]
-    BlockHeightNotFound(u64),
     #[error("Chain has a too low cumulative difficulty")]
     LowerCumulativeDifficulty,
-    #[error("No cumulative difficulty found")]
-    NoCumulativeDifficulty,
-    #[error(transparent)]
-    ErrorStd(#[from] std::io::Error),
-    #[error(transparent)]
-    ErrorOnBech32(#[from] Bech32Error),
-    #[error(transparent)]
-    ErrorOnP2p(#[from] P2pError),
-    #[error(transparent)]
-    ErrorOnReader(#[from] ReaderError),
-    #[error(transparent)]
-    ErrorOnPrompt(#[from] PromptError),
-    #[error("Poison Error: {}", _0)]
-    PoisonError(String),
-    #[error("Blockchain is syncing")]
-    IsSyncing,
-    #[error("Invalid transaction signature")]
-    InvalidTransactionSignature,
     #[error("Genesis block is not mined by dev address!")]
     GenesisBlockMiner,
-    #[error("Invalid genesis block")]
-    InvalidGenesisBlock,
     #[error("Not enough blocks")]
     NotEnoughBlocks,
     #[error("Gas overflow during calculation")]
     GasOverflow,
     #[error("Unknown data store error")]
     Unknown,
-    #[error("No signature found for this TX")]
-    NoTxSignature,
-    #[error("Smart Contract not supported yet")]
-    SmartContractTodo,
     #[error("Unexpected transaction variant to set fees")]
     UnexpectedTransactionVariant,
-    #[error("Unexpected error on database: {}", _0)]
-    DatabaseError(#[from] sled::Error),
     #[error("Unsupported operation")]
     UnsupportedOperation,
     #[error("Data not found on disk: {}", _0)]
@@ -320,16 +263,10 @@ pub enum BlockchainError {
     BlockDeviation,
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
-    #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
-    InvalidTxNonce(Hash, Nonce, Nonce, Address),
-    #[error("Mempool cache not found")]
-    MempoolCacheNotFound,
     #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
     InvalidTxNonceMempoolCache(Nonce, Nonce, Nonce),
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
-    #[error(transparent)]
-    DifficultyError(#[from] DifficultyError),
     #[error("No balance found on disk for {}", _0)]
     NoBalance(Address),
     #[error("No balance changes for {} at topoheight {} and asset {}", _0, _1, _2)]
@@ -350,64 +287,67 @@ pub enum BlockchainError {
     PruneLowerThanLastPruned,
     #[error("Auto prune mode is misconfigured")]
     AutoPruneMode,
-    #[error(transparent)]
-    TryFromSliceError(#[from] std::array::TryFromSliceError),
-    #[error("Invalid ciphertext")]
-    InvalidCiphertext,
-    #[error("Invalid chain state, no sender output ?")]
-    NoSenderOutput,
     #[error("Invalid chain state, sender {} account is not found", _0)]
     NoTxSender(Address),
+    #[error("Unknown account")]
+    UnknownAccount,
+    #[error(transparent)]
+    DifficultyError(#[from] DifficultyError),
+    #[error(transparent)]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
     #[error(transparent)]
     DecompressionError(#[from] DecompressionError),
     #[error(transparent)]
     Any(#[from] anyhow::Error),
-    #[error("Invalid nonce for TX {}: expected {}, got {}", _0, _1, _2)]
-    InvalidNonce(Hash, Nonce, Nonce),
-    #[error("Sender cannot be receiver")]
-    SenderIsReceiver,
     #[error("Invalid transaction proof: {}", _0)]
     TransactionProof(ProofVerificationError),
     #[error("Error while generating pow hash")]
     POWHashError(#[from] XelisHashError),
-    #[error("Transfer count is invalid")]
-    TransferCount,
-    #[error("Invalid commitments assets")]
-    Commitments,
-    #[error("MultiSig is not configured")]
-    MultiSigNotConfigured,
-    #[error("Invalid multisig participants count")]
-    MultiSigParticipants,
-    #[error("Invalid multisig threshold")]
-    MultiSigThreshold,
-    #[error("Invalid transaction format")]
-    InvalidTransactionFormat,
-    #[error("Invalid invoke contract")]
-    InvalidInvokeContract,
-    #[error("Deposit not found")]
-    DepositNotFound,
-    #[error("MultiSig not found")]
-    MultiSigNotFound,
     #[error(transparent)]
     ModuleError(#[from] ValidatorError),
-    #[error("Invalid transaction in block while verifying in multi-thread mode")]
-    InvalidTransactionMultiThread,
-    #[error("Unknown account")]
-    UnknownAccount,
+    #[error(transparent)]
+    StdError(#[from] std::io::Error),
+    #[error(transparent)]
+    Bech32Error(#[from] Bech32Error),
+    #[error(transparent)]
+    P2pError(#[from] P2pError),
+    #[error(transparent)]
+    ReaderError(#[from] ReaderError),
+    #[error(transparent)]
+    PromptError(#[from] PromptError),
+    #[error(transparent)]
+    JoinError(#[from] JoinError),
+    #[error("Poison Error: {}", _0)]
+    PoisonError(String),
     #[error(transparent)]
     SemaphoreError(#[from] AcquireError),
+    #[error(transparent)]
+    VerificationError(#[from] VerificationError),
+    #[error(transparent)]
+    ContractError(#[from] ContractError),
+    #[cfg(feature = "sled")]
+    #[error("Unexpected error on database: {}", _0)]
+    DatabaseError(#[from] sled::Error),
 }
 
 impl BlockchainError {
     pub fn id(&self) -> usize {
         self.discriminant() as usize
     }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::VerificationError(e) => e.into(),
+            Self::ContractError(e) => e.into(),
+            _ => self.into(),
+        }
+    }
 }
 
 impl From<BlockchainError> for InternalRpcError {
     fn from(value: BlockchainError) -> Self {
         InternalRpcError::Any {
-            kind: (&value).into(),
+            kind: value.kind(),
             error: value.into()
         }
     }
@@ -419,28 +359,12 @@ impl<T> From<PoisonError<T>> for BlockchainError {
     }
 }
 
-impl From<VerificationError<BlockchainError>> for BlockchainError {
-    fn from(value: VerificationError<BlockchainError>) -> Self {
+impl From<VerificationStateError<BlockchainError>> for BlockchainError {
+    fn from(value: VerificationStateError<BlockchainError>) -> Self {
         match value {
-            VerificationError::InvalidNonce(tx, expected, got) => BlockchainError::InvalidNonce(tx, expected, got),
-            VerificationError::SenderIsReceiver => BlockchainError::NoSenderOutput,
-            VerificationError::InvalidSignature => BlockchainError::InvalidTransactionSignature,
-            VerificationError::State(s) => s,
-            VerificationError::Proof(proof) => BlockchainError::TransactionProof(proof),
-            VerificationError::TransferCount => BlockchainError::TransferCount,
-            VerificationError::Commitments => BlockchainError::Commitments,
-            VerificationError::TransactionExtraDataSize => BlockchainError::InvalidTransactionExtraData,
-            VerificationError::TransferExtraDataSize => BlockchainError::InvalidTransferExtraData,
-            VerificationError::MultiSigNotConfigured => BlockchainError::MultiSigNotConfigured,
-            VerificationError::MultiSigParticipants => BlockchainError::MultiSigParticipants,
-            VerificationError::MultiSigThreshold => BlockchainError::MultiSigThreshold,
-            VerificationError::InvalidFormat => BlockchainError::InvalidTransactionFormat,
-            VerificationError::MultiSigNotFound => BlockchainError::MultiSigNotFound,
-            VerificationError::ModuleError(e) => BlockchainError::ModuleError(e),
-            VerificationError::AnyError(e) => BlockchainError::Any(e),
-            VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
-            VerificationError::DepositNotFound => BlockchainError::DepositNotFound,
-            e => BlockchainError::Any(e.into())
+            VerificationStateError::State(state_error) => state_error,
+            VerificationStateError::VerificationError(verification_error) => verification_error.into(),
+            VerificationStateError::ContractError(contract_error) => contract_error.into(),
         }
     }
 }
