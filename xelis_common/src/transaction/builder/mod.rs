@@ -84,6 +84,7 @@ use super::{
 pub use payload::*;
 
 #[derive(Error, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum GenerationError {
     #[error("Invalid constructor invoke on deploy")]
     InvalidConstructorInvoke,

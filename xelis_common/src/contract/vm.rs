@@ -74,6 +74,7 @@ impl<'a> ContractCaller<'a> {
 }
 
 #[derive(Error, Debug, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum ContractError {
     #[error(transparent)]
     VM(#[from] VMError),

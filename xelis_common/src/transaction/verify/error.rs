@@ -38,6 +38,7 @@ impl<S> From<ContractStateError<S>> for VerificationStateError<S> {
 }
 
 #[derive(Error, Debug, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum VerificationError {
     #[error("Invalid TX {} nonce, got {} expected {}", _0, _1, _2)]
     InvalidNonce(Hash, Nonce, Nonce),
