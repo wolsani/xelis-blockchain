@@ -50,9 +50,7 @@ pub enum XSWDResponse {
     Event(DaemonNotifyEvent, Option<(broadcast::Receiver<Value>, Option<Id>)>, Option<Value>)
 }
 
-// WASM doesn't support Send bounds (single-threaded)
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 pub trait XSWDHandler {
     // Handler function to request permission to user
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, ErrorWithKind>;
@@ -76,8 +74,7 @@ pub trait XSWDHandler {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 pub trait XSWDProvider {
     async fn has_app_with_id(&self, id: &str) -> bool;
 }
