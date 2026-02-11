@@ -129,12 +129,21 @@ impl WalletError {
     pub  fn id(&self) -> usize {
         self.discriminant() as usize
     }
+
+    // Return the kind for the variant, used for RPC error mapping
+    pub fn kind(&self) -> &'static str {
+        match self {
+            WalletError::Any(e) => e.kind,
+            WalletError::GenerationError(e) => e.into(),
+            _ => self.into()
+        }
+    }
 }
 
 #[cfg(feature = "xswd")]
 impl RPCError for WalletError {
     fn kind(&self) -> &'static str {
-        self.into()
+        WalletError::kind(self)
     }
 }
 
@@ -142,7 +151,7 @@ impl RPCError for WalletError {
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
         InternalRpcError::Any {
-            kind: (&e).into(),
+            kind: e.kind(),
             error: e.into()
         }
     }
