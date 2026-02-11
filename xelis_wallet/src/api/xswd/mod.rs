@@ -17,10 +17,7 @@ use xelis_common::{
     },
     async_handler,
     crypto::elgamal::PublicKey as DecompressedPublicKey,
-    rpc::{
-        server::websocket::Events,
-        *
-    },
+    rpc::*,
     tokio::sync::{Semaphore, broadcast}
 };
 use log::{debug, info};
