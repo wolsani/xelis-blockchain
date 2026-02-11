@@ -1,4 +1,5 @@
 use anyhow::Error as AnyError;
+use strum::IntoStaticStr;
 use thiserror::Error;
 use xelis_vm::ValidatorError;
 
@@ -36,7 +37,7 @@ impl<S> From<ContractStateError<S>> for VerificationStateError<S> {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, IntoStaticStr)]
 pub enum VerificationError {
     #[error("Invalid TX {} nonce, got {} expected {}", _0, _1, _2)]
     InvalidNonce(Hash, Nonce, Nonce),

@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use strum::IntoStaticStr;
 use thiserror::Error;
 use curve25519_dalek::Scalar;
 use log::{debug, log, trace, warn, Level};
@@ -72,7 +73,7 @@ impl<'a> ContractCaller<'a> {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, IntoStaticStr)]
 pub enum ContractError {
     #[error(transparent)]
     VM(#[from] VMError),
