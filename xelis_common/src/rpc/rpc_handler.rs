@@ -5,7 +5,6 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use cfg_if::cfg_if;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use metrics::{counter, histogram};
@@ -28,25 +27,15 @@ pub use runtime_context::{Context, ShareableTid, tid};
 // Type definition for an RPC method handler
 // It is a boxed function that takes a context reference and a JSON value as parameters
 // and returns a pinned future that resolves to a Result containing a JSON value or an InternalRpcError
-// It is Send and Sync to allow safe sharing across threads except for wasm32 target where Send is not required
-cfg_if! {
-    if #[cfg(target_arch = "wasm32")] {
-        pub type Handler = Box<dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + 'a>>>;
+// It is Send and Sync to allow safe sharing across threads and async contexts
+pub type Handler = Box<
+    dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + 'a>>
+    + Send + Sync
+>;
 
-        pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + 'a>>;
+pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
 
-        pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + 'a>>;
-    } else {
-        pub type Handler = Box<
-            dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + 'a>>
-            + Send + Sync
-        >;
-
-        pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
-
-        pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
-    }
-}
+pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
 
 // Information about an RPC method
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
