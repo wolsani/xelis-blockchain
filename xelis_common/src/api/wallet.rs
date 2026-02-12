@@ -14,6 +14,7 @@ use crate::{
         Signature,
     },
     serializer::Hexable,
+    time::TimestampMillis,
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
         extra_data::{PlaintextExtraData, UnknownExtraDataFormat},
@@ -208,6 +209,9 @@ pub struct ListTransactionsParams {
     // Filter by topoheight range (inclusive)
     pub min_topoheight: Option<TopoHeight>,
     pub max_topoheight: Option<TopoHeight>,
+    // Filter by timestamp range (inclusive, milliseconds)
+    pub min_timestamp: Option<TimestampMillis>,
+    pub max_timestamp: Option<TimestampMillis>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
     pub address: Option<Address>,
     #[serde(default = "default_true_value")]
