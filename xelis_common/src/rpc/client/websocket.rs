@@ -183,13 +183,13 @@ pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
 impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static> WebSocketJsonRPCClientImpl<E> {
 
     // Create a new WebSocketJsonRPCClient with the target address
-    pub async fn new(target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+    pub async fn new<T: AsRef<str>>(target: T) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
         Self::with(target, Duration::from_secs(15)).await
     }
 
     // Create a new WebSocketJsonRPCClient with the target address and timeout
-    pub async fn with(mut target: String, timeout_after: Duration) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
-        target = sanitize_ws_address(target.as_str());
+    pub async fn with<T: AsRef<str>>(target: T, timeout_after: Duration) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+        let target = sanitize_ws_address(target.as_ref());
 
         let (sender, receiver) = mpsc::channel(64);
         let client = Arc::new(WebSocketJsonRPCClientImpl {
