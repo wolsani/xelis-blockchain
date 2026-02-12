@@ -34,7 +34,7 @@ use xelis_common::{
 use crate::{
     api::AppStateShared,
     error::WalletError,
-    storage::Balance,
+    storage::{TransactionFilterOptions, Balance},
     transaction_builder::TransactionBuilderState,
     wallet::Wallet
 };
@@ -652,19 +652,22 @@ async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsPa
     let opt_key = params.address.map(|addr| addr.to_public_key());
     
     let mainnet = wallet.get_network().is_mainnet();
-    let txs = storage.get_filtered_transactions(
-        opt_key.as_ref(),
-        params.asset.as_ref(),
-        params.min_topoheight,
-        params.max_topoheight,
-        params.accept_incoming,
-        params.accept_outgoing,
-        params.accept_coinbase,
-        params.accept_burn,
-        params.query.as_ref(),
-        params.limit,
-        params.skip,
-    )?
+    let filters = TransactionFilterOptions {
+        address: opt_key.as_ref(),
+        asset: params.asset.as_ref(),
+        min_topoheight: params.min_topoheight,
+        max_topoheight: params.max_topoheight,
+        min_timestamp: params.min_timestamp,
+        max_timestamp: params.max_timestamp,
+        accept_incoming: params.accept_incoming,
+        accept_outgoing: params.accept_outgoing,
+        accept_coinbase: params.accept_coinbase,
+        accept_burn: params.accept_burn,
+        query: params.query.as_ref(),
+        limit: params.limit,
+        skip: params.skip,
+    };
+    let txs = storage.get_filtered_transactions(&filters)?
         .into_iter()
         .map(|tx| tx.serializable(mainnet))
         .collect::<Vec<_>>();

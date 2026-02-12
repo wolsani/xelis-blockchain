@@ -74,6 +74,7 @@ use xelis_common::{
 use xelis_wallet::{
     config::{Config, LogProgressTableGenerationReportFunction, DIR_PATH},
     precomputed_tables,
+    storage::TransactionFilterOptions,
     wallet::{
         RecoverOption,
         Wallet
@@ -1671,19 +1672,11 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
     }
 
-    let transactions = storage.get_filtered_transactions(
-        None,
-        None,
-        None,
-        None,
-        true,
-        true,
-        true,
-        true,
-        None,
-        Some(ELEMENTS_PER_PAGE),
-        Some((page - 1) * ELEMENTS_PER_PAGE)
-    )?;
+    let transactions = storage.get_filtered_transactions(&TransactionFilterOptions {
+        limit: Some(ELEMENTS_PER_PAGE),
+        skip: Some((page - 1) * ELEMENTS_PER_PAGE),
+        ..TransactionFilterOptions::default()
+    })?;
 
     manager.message(format!("{} Transactions (total {}) page {}/{}:", transactions.len(), txs_len, page, max_pages));
     for tx in transactions {

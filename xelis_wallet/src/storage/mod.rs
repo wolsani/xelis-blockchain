@@ -32,6 +32,7 @@ use xelis_common::{
         HASH_SIZE
     },
     network::Network,
+    time::TimestampMillis,
     serializer::{
         Reader,
         Serializer,
@@ -60,6 +61,49 @@ use log::{debug, error, trace, warn};
 use backend::{Db, Tree};
 
 pub use types::*;
+
+#[derive(Debug, Clone)]
+pub struct TransactionFilterOptions<'a> {
+    pub address: Option<&'a PublicKey>,
+    pub asset: Option<&'a Hash>,
+    pub min_topoheight: Option<u64>,
+    pub max_topoheight: Option<u64>,
+    pub min_timestamp: Option<TimestampMillis>,
+    pub max_timestamp: Option<TimestampMillis>,
+    pub accept_incoming: bool,
+    pub accept_outgoing: bool,
+    pub accept_coinbase: bool,
+    pub accept_burn: bool,
+    pub query: Option<&'a Query>,
+    pub limit: Option<usize>,
+    pub skip: Option<usize>,
+}
+
+impl<'a> Default for TransactionFilterOptions<'a> {
+    fn default() -> Self {
+        Self {
+            address: None,
+            asset: None,
+            min_topoheight: None,
+            max_topoheight: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            accept_incoming: true,
+            accept_outgoing: true,
+            accept_coinbase: true,
+            accept_burn: true,
+            query: None,
+            limit: None,
+            skip: None,
+        }
+    }
+}
+
+impl<'a> TransactionFilterOptions<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 // keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
@@ -1006,7 +1050,7 @@ impl EncryptedStorage {
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
-        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None, None, None)
+        self.get_filtered_transactions(&TransactionFilterOptions::default())
     }
 
     // Find the last outgoing transaction created
@@ -1175,21 +1219,23 @@ impl EncryptedStorage {
 
     // Filter when the data is deserialized to not load all transactions in memory
     // Topoheight bounds are inclusive
-    pub fn get_filtered_transactions(
-        &self,
-        address: Option<&PublicKey>,
-        asset: Option<&Hash>,
-        min_topoheight: Option<u64>,
-        max_topoheight: Option<u64>,
-        accept_incoming: bool,
-        accept_outgoing: bool,
-        accept_coinbase: bool,
-        accept_burn: bool,
-        query: Option<&Query>,
-        limit: Option<usize>,
-        skip: Option<usize>
-    ) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(&self, options: &TransactionFilterOptions<'_>) -> Result<Vec<TransactionEntry>> {
         trace!("get filtered transactions");
+        let TransactionFilterOptions {
+            address,
+            asset,
+            min_topoheight,
+            max_topoheight,
+            min_timestamp,
+            max_timestamp,
+            accept_incoming,
+            accept_outgoing,
+            accept_coinbase,
+            accept_burn,
+            query,
+            limit,
+            skip,
+        } = *options;
 
         // Search the correct range
         let iterator = if self.is_syncing {
@@ -1252,6 +1298,13 @@ impl EncryptedStorage {
             if min_topoheight.is_some_and(|min| entry.get_topoheight() < min) ||
                max_topoheight.is_some_and(|max| entry.get_topoheight() > max) {
                 debug!("entry topoheight {} out of bounds", entry.get_topoheight());
+                continue;
+            }
+
+            // We also check timestamp bounds here
+            if min_timestamp.is_some_and(|min| entry.get_timestamp() < min) ||
+               max_timestamp.is_some_and(|max| entry.get_timestamp() > max) {
+                debug!("entry timestamp {} out of bounds", entry.get_timestamp());
                 continue;
             }
 
