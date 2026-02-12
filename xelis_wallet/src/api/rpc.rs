@@ -649,12 +649,12 @@ async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsPa
 
     let wallet = wallet_from_context(context)?;
     let storage = wallet.get_storage().read().await;
-    let opt_key = params.address.map(|addr| addr.to_public_key());
+    let address = params.address.map(|addr| Cow::Owned(addr.to_public_key()));
     
     let mainnet = wallet.get_network().is_mainnet();
     let filters = TransactionFilterOptions {
-        address: opt_key.as_ref(),
-        asset: params.asset.as_ref(),
+        address,
+        asset: params.asset.map(Cow::Owned),
         min_topoheight: params.min_topoheight,
         max_topoheight: params.max_topoheight,
         min_timestamp: params.min_timestamp,
@@ -667,7 +667,7 @@ async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsPa
         limit: params.limit,
         skip: params.skip,
     };
-    let txs = storage.get_filtered_transactions(&filters)?
+    let txs = storage.get_filtered_transactions(filters)?
         .into_iter()
         .map(|tx| tx.serializable(mainnet))
         .collect::<Vec<_>>();

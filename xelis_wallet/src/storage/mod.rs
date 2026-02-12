@@ -5,9 +5,7 @@ mod types;
 mod tests;
 
 use std::{
-    cmp::Ordering,
-    collections::{HashMap, VecDeque},
-    num::NonZeroUsize,
+    borrow::Cow, cmp::Ordering, collections::{HashMap, VecDeque}, num::NonZeroUsize
 };
 use indexmap::IndexMap;
 use itertools::Either;
@@ -64,8 +62,8 @@ pub use types::*;
 
 #[derive(Debug, Clone)]
 pub struct TransactionFilterOptions<'a> {
-    pub address: Option<&'a PublicKey>,
-    pub asset: Option<&'a Hash>,
+    pub address: Option<Cow<'a, PublicKey>>,
+    pub asset: Option<Cow<'a, Hash>>,
     pub min_topoheight: Option<u64>,
     pub max_topoheight: Option<u64>,
     pub min_timestamp: Option<TimestampMillis>,
@@ -1050,7 +1048,7 @@ impl EncryptedStorage {
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
-        self.get_filtered_transactions(&TransactionFilterOptions::default())
+        self.get_filtered_transactions(TransactionFilterOptions::default())
     }
 
     // Find the last outgoing transaction created
@@ -1219,7 +1217,7 @@ impl EncryptedStorage {
 
     // Filter when the data is deserialized to not load all transactions in memory
     // Topoheight bounds are inclusive
-    pub fn get_filtered_transactions(&self, options: &TransactionFilterOptions<'_>) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(&self, options: TransactionFilterOptions<'_>) -> Result<Vec<TransactionEntry>> {
         trace!("get filtered transactions");
         let TransactionFilterOptions {
             address,
@@ -1235,7 +1233,7 @@ impl EncryptedStorage {
             query,
             limit,
             skip,
-        } = *options;
+        } = options;
 
         // Search the correct range
         let iterator = if self.is_syncing {
@@ -1310,10 +1308,10 @@ impl EncryptedStorage {
 
             let mut transfers: Option<Vec<Transfer>> = None;
             match entry.get_mut_entry() {
-                EntryData::Coinbase { .. } if accept_coinbase && (asset.map(|a| *a == XELIS_ASSET).unwrap_or(true)) => {},
+                EntryData::Coinbase { .. } if accept_coinbase && (asset.as_ref().map(|a| *a.as_ref() == XELIS_ASSET).unwrap_or(true)) => {},
                 EntryData::Burn { asset: burn_asset, .. } if accept_burn => {
-                    if let Some(asset) = asset {
-                        if *asset != *burn_asset {
+                    if let Some(asset) = asset.as_ref() {
+                        if *asset.as_ref() != *burn_asset {
                             trace!("entry burn asset {} != requested asset {}", burn_asset, asset);
                             continue;
                         }
@@ -1321,49 +1319,49 @@ impl EncryptedStorage {
                 },
                 EntryData::Incoming { from, transfers: t } if accept_incoming => {
                     // Filter by address
-                    if let Some(filter_key) = address {
-                        if *from != *filter_key {
+                    if let Some(filter_key) = address.as_ref() {
+                        if *from != *filter_key.as_ref() {
                             trace!("entry from != requested address");
                             continue;
                         }
                     }
 
                     // Filter by asset
-                    if let Some(asset) = asset {
-                        t.retain(|transfer| *transfer.get_asset() == *asset);
+                    if let Some(asset) = asset.as_ref() {
+                        t.retain(|transfer| *transfer.get_asset() == *asset.as_ref());
                     }
 
                     transfers = Some(t.iter_mut().map(|t| Transfer::In(t)).collect());
                 },
                 EntryData::Outgoing { transfers: t, .. } if accept_outgoing => {
                     // Filter by address
-                    if let Some(filter_key) = address {
-                        t.retain(|transfer| *transfer.get_destination() == *filter_key);
+                    if let Some(filter_key) = address.as_ref() {
+                        t.retain(|transfer| *transfer.get_destination() == *filter_key.as_ref());
                     }
 
                     // Filter by asset
-                    if let Some(asset) = asset {
-                        t.retain(|transfer| *transfer.get_asset() == *asset);
+                    if let Some(asset) = asset.as_ref() {
+                        t.retain(|transfer| *transfer.get_asset() == *asset.as_ref());
                     }
 
                     transfers = Some(t.iter_mut().map(|t| Transfer::Out(t)).collect());
                 },
                 EntryData::MultiSig { participants, .. } if accept_outgoing => {
                     // Filter by address
-                    if let Some(filter_key) = address {
-                        if !participants.contains(filter_key) {
+                    if let Some(filter_key) = address.as_ref() {
+                        if !participants.contains(filter_key.as_ref()) {
                             continue;
                         }
                     }
                 },
                 EntryData::InvokeContract { deposits, .. } if accept_outgoing => {
                     // Filter by asset
-                    if let Some(asset) = asset {
-                        if !deposits.contains_key(asset) {
+                    if let Some(asset) = asset.as_ref() {
+                        if !deposits.contains_key(asset.as_ref()) {
                             continue;
                         }
 
-                        deposits.retain(|deposit, _| *deposit == *asset);
+                        deposits.retain(|deposit, _| *deposit == *asset.as_ref());
                     }
                 },
                 EntryData::DeployContract { .. } if accept_outgoing => {},

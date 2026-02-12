@@ -404,7 +404,7 @@ fn test_get_filtered_transactions_by_topoheight_range() {
     }
 
     // Test range with both min and max (inclusive)
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         min_topoheight: Some(30),
         max_topoheight: Some(70),
         ..TransactionFilterOptions::default()
@@ -416,14 +416,14 @@ fn test_get_filtered_transactions_by_topoheight_range() {
     assert_eq!(topos, vec![70, 60, 50, 40, 30], "Should return in reverse order");
 
     // Test range with only min
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         min_topoheight: Some(80),
         ..TransactionFilterOptions::default()
     }).unwrap();
     assert_eq!(result.len(), 3, "Should return 3 transactions (80, 90, 100)");
 
     // Test range with only max
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         max_topoheight: Some(30),
         ..TransactionFilterOptions::default()
     }).unwrap();
@@ -442,7 +442,7 @@ fn test_get_filtered_transactions_with_limit() {
     }
 
     // Test with limit
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         limit: Some(5),
         ..TransactionFilterOptions::default()
     }).unwrap();
@@ -461,7 +461,7 @@ fn test_get_filtered_transactions_with_skip() {
     }
 
     // Test with skip
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         skip: Some(3),
         ..TransactionFilterOptions::default()
     }).unwrap();
@@ -482,7 +482,7 @@ fn test_get_filtered_transactions_by_timestamp_range() {
         storage.save_transaction(&hash, &entry).unwrap();
     }
 
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         min_timestamp: Some(2000),
         max_timestamp: Some(4000),
         ..TransactionFilterOptions::default()
@@ -540,7 +540,7 @@ fn test_edge_case_empty_storage() {
     assert_eq!(result, None, "Should return None for empty storage");
 
     // Test filtered transactions on empty storage
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions::default()).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions::default()).unwrap();
     assert_eq!(result.len(), 0, "Should return empty vec for empty storage");
 
     // Test count
@@ -615,7 +615,7 @@ fn test_filter_by_transaction_type_coinbase() {
     }
 
     // Filter only coinbase
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         accept_incoming: false,
         accept_outgoing: false,
         accept_coinbase: true,
@@ -653,7 +653,7 @@ fn test_filter_by_transaction_type_burn() {
     }
 
     // Filter only burn
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         accept_incoming: false,
         accept_outgoing: false,
         accept_coinbase: false,
@@ -691,7 +691,7 @@ fn test_filter_by_multiple_types() {
     }
 
     // Filter for both coinbase and burn
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         accept_incoming: false,
         accept_outgoing: false,
         accept_coinbase: true,
@@ -734,7 +734,7 @@ fn test_filter_by_topoheight_range_with_types() {
     storage.reorder_transactions_indexes(None).unwrap();
 
     // Filter for coinbase in range [15, 35]
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         min_topoheight: Some(15),
         max_topoheight: Some(35),
         accept_incoming: false,
@@ -750,7 +750,7 @@ fn test_filter_by_topoheight_range_with_types() {
     assert!(!result.iter().any(|t| t.get_topoheight() == 50), "Should not include topo 50");
 
     // Filter for burn in range [15, 35]
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         min_topoheight: Some(15),
         max_topoheight: Some(35),
         accept_incoming: false,
@@ -779,7 +779,7 @@ fn test_filter_none_transaction_types() {
     }
 
     // Filter with no transaction types enabled
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         accept_incoming: false,
         accept_outgoing: false,
         accept_coinbase: false,
@@ -816,7 +816,7 @@ fn test_filter_with_gap_consolidation() {
     storage.reorder_transactions_indexes(None).unwrap();
 
     // Filter all transactions without topoheight filtering to verify consolidation works
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         accept_incoming: false,
         accept_outgoing: false,
         accept_coinbase: true,
@@ -851,7 +851,7 @@ fn test_filter_topoheight_boundaries() {
     }
 
     // Test exact boundary - inclusive on both ends
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         min_topoheight: Some(100),
         max_topoheight: Some(200),
         accept_incoming: false,
@@ -887,7 +887,7 @@ fn test_filter_topoheight() {
     storage.reorder_transactions_indexes(None).unwrap();
 
     // Filter for coinbase in range [50, 150] with limit and skip
-    let result = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
         min_topoheight: Some(50),
         max_topoheight: Some(150),
         accept_incoming: false,

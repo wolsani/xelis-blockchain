@@ -1672,7 +1672,7 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
     }
 
-    let transactions = storage.get_filtered_transactions(&TransactionFilterOptions {
+    let transactions = storage.get_filtered_transactions(TransactionFilterOptions {
         limit: Some(ELEMENTS_PER_PAGE),
         skip: Some((page - 1) * ELEMENTS_PER_PAGE),
         ..TransactionFilterOptions::default()
