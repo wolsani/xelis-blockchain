@@ -703,7 +703,7 @@ impl NetworkHandler {
 
     // Helper method to process a single balance update with concurrent block processing
     async fn process_balance_update(&self, address: &Address, asset: Hash, mut balance: CiphertextCache, topoheight: u64, block_response: RPCBlockResponse<'static>, outputs: GetContractsOutputsResult<'static>, balances: bool, highest_version: bool, highest_nonce: Arc<Mutex<Option<u64>>>) -> Result<(), Error> {
-        debug!("Processing topoheight {}", topoheight);
+        debug!("Processing topoheight {}, is highest {}", topoheight, highest_version);
         let timestamp = block_response.timestamp;
         let changes = self.process_block(address, block_response, topoheight, false, true).await?;
 
@@ -836,8 +836,6 @@ impl NetworkHandler {
                 // Drive one pending task to completion if any are running
                 Some(result) = pending_tasks.next(), if !pending_tasks.is_empty() => {
                     result?;
-                    // Only the first processed topoheight should be marked as highest_version
-                    highest_version = false;
                 },
                 // Spawn a new task when we have capacity and data is available
                 maybe_msg = data_receiver.recv(), if !receiver_closed && pending_tasks.len() < self.concurrency => {
@@ -854,6 +852,7 @@ impl NetworkHandler {
                             Arc::clone(&highest_nonce_shared),
                         ));
                         pending_tasks.push(task);
+                        highest_version = false;
                     } else {
                         receiver_closed = true;
                     }

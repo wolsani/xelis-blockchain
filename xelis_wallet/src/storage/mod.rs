@@ -995,6 +995,7 @@ impl EncryptedStorage {
             }
         }
 
+        trace!("Saving balance for asset {} with amount {}, at topoheight {}", asset, balance.amount, balance.topoheight);
         self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes())?;
 
         let mut cache = self.balances_cache.lock().await;
