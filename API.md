@@ -4759,6 +4759,8 @@ Meaning if you set max_topoheight at 10 and you have a TX at 10 its returned.
 |      asset      |   Hash  | Optional | Filter on a specific asset only. By default accept all assets |
 |  min_topoheight | Integer | Optional |                    Start from specific topo                   |
 |  max_topoheight | Integer | Optional |                      End at specific topo                     |
+|  min_timestamp  | Integer | Optional |             Start from specific timestamp (ms)                |
+|  max_timestamp  | Integer | Optional |              End at specific timestamp (ms)                   |
 |     address     |  String | Optional |                      Filter with address                      |
 | accept_incoming | Boolean | Optional |                        Filter incoming                        |
 | accept_outgoing | Boolean | Optional |                        Filter outgoing                        |
