@@ -5021,6 +5021,116 @@ Please note that the value returned is in atomic units.
 }
 ```
 
+#### Create Ownership Proof
+Create a cryptographic proof that you own at least a certain amount of an asset.
+The proof is returned as a bech32-encoded string that can be shared with other parties for verification.
+
+If `topoheight` is not provided, the current wallet balance topoheight is used.
+If `topoheight` is provided, the balance at the requested topoheight will be fetched from the daemon and used for proof creation.
+
+##### Method `create_ownership_proof`
+
+##### Parameters
+|     Name     |     Type    | Required |                           Note                            |
+|:------------:|:-----------:|:--------:|:---------------------------------------------------------:|
+|    asset     |    Hash     | Required |          Asset to create the proof for                    |
+| topoheight   |   Integer   | Optional | Topoheight to use for the balance (defaults to current)   |
+|    amount    |   Integer   | Required |          Amount to prove ownership of                     |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "create_ownership_proof",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 10000
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "proof:..."
+}
+```
+
+#### Create Balance Proof
+Create a cryptographic proof of your balance for a specific asset.
+The proof is returned as a bech32-encoded string that can be shared with other parties for verification.
+
+If `topoheight` is not provided, the current wallet balance topoheight is used.
+If `topoheight` is provided, the balance at the requested topoheight will be fetched from the daemon and used for proof creation.
+
+##### Method `create_balance_proof`
+
+##### Parameters
+|     Name     |     Type    | Required |                           Note                            |
+|:------------:|:-----------:|:--------:|:---------------------------------------------------------:|
+|    asset     |    Hash     | Required |          Asset to create the proof for                    |
+| topoheight   |   Integer   | Optional | Topoheight to use for the balance (defaults to current)   |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "create_balance_proof",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "proof:..."
+}
+```
+
+#### Verify Human Readable Proof
+Verify a cryptographic proof (ownership or balance) against an address.
+The wallet must be in online mode to fetch the on-chain balance at the proof's topoheight.
+
+Returns `true` if the proof is valid.
+
+##### Method `verify_human_readable_proof`
+
+##### Parameters
+|   Name   |       Type       | Required |                          Note                          |
+|:--------:|:----------------:|:--------:|:------------------------------------------------------:|
+|  proof   |      String      | Required | Bech32-encoded proof string (ownership or balance)     |
+| address  |      Address     | Required | Address of the prover to verify against                |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "verify_human_readable_proof",
+    "id": 1,
+    "params": {
+        "proof": "proof:...",
+        "address": "xel:..."
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
 ### Storage
 
 XELIS Wallet has the ability to have a built-in encrypted DB that can be used to store / fetch entries easily.
