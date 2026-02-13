@@ -24,6 +24,7 @@ use xelis_common::{
         Hash,
         Hashable,
         Signature,
+        HumanReadableProof,
         HASH_SIZE
     },
     network::Network,
@@ -707,6 +708,23 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         "rebuild_transactions_indexes",
         "Rebuild the transactions indexes from the stored transactions",
         CommandHandler::Async(async_handler!(rebuild_transactions_indexes))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "create_ownership_proof",
+        "Create an ownership proof for an asset and amount",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+            Arg::new("amount", ArgType::String),
+        ],
+        CommandHandler::Async(async_handler!(create_ownership_proof))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "create_balance_proof",
+        "Create a balance proof for an asset",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+        ],
+        CommandHandler::Async(async_handler!(create_balance_proof))
     ))?;
 
     let mut context = command_manager.get_context().lock()?;
@@ -2258,6 +2276,65 @@ async fn rebuild_transactions_indexes(manager: &CommandManager, _: ArgumentManag
     storage.rebuild_transactions_indexes()
         .context("Error while rebuilding transactions indexes")?;
     manager.message("Transactions indexes have been rebuilt successfully.");
+
+    Ok(())
+}
+
+async fn create_ownership_proof(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let asset = if args.has_argument("asset") {
+        args.get_value("asset")?.to_hash()?
+    } else {
+        read_asset_name(&prompt, wallet).await?
+    };
+
+    let (amount, asset_data) = if args.has_argument("amount") {
+        let value = args.get_value("amount")?.to_string_value()?;
+        let storage = wallet.get_storage().read().await;
+        let data = storage.get_asset(&asset).await?;
+        (
+            from_coin(value, data.get_decimals()).context("Invalid amount")?,
+            data
+        )
+    } else {
+        read_asset_amount(&prompt, wallet, &asset).await?
+    };
+
+    manager.message(format!("Creating ownership proof for {} of {} ({})...", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset));
+    let (proof, topoheight) = wallet.create_ownership_proof(&asset, amount).await
+        .context("Error while creating ownership proof")?;
+
+    let proof = HumanReadableProof::Ownership { proof, asset, topoheight };
+    manager.message(format!("Ownership proof: {}", proof));
+
+    Ok(())
+}
+
+async fn create_balance_proof(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let asset = if args.has_argument("asset") {
+        args.get_value("asset")?.to_hash()?
+    } else {
+        read_asset_name(&prompt, wallet).await?
+    };
+
+    let asset_data = {
+        let storage = wallet.get_storage().read().await;
+        storage.get_asset(&asset).await?
+    };
+
+    manager.message(format!("Creating balance proof for {} ({})...", asset_data.get_name(), asset));
+    let (proof, topoheight) = wallet.create_balance_proof(&asset).await
+        .context("Error while creating balance proof")?;
+
+    let proof = HumanReadableProof::Balance { proof, asset, topoheight };
+    manager.message(format!("Balance proof: {}", proof));
 
     Ok(())
 }

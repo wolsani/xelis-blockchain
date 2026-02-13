@@ -26,12 +26,14 @@ use xelis_common::{
         wallet::*,
         DataElement
     },
+    block::TopoHeight,
     asset::RPCAssetData,
     crypto::{
         elgamal::{
             Ciphertext,
             DecryptHandle
         },
+        proofs::{OwnershipProof, BalanceProof},
         Address,
         Hash,
         Hashable,
@@ -821,6 +823,32 @@ impl Wallet {
         trace!("decrypt extra data");
         let res = cipher.decrypt(self.account.inner.keypair.get_private_key(), handle, role, version)?;
         Ok(res)
+    }
+
+    // Create an Ownership Proof for a given asset and amount
+    // It also to prove that you own at least the amount of the asset, without revealing the exact amount you own
+    pub async fn create_ownership_proof(&self, asset: &Hash, amount: u64) -> Result<(OwnershipProof, TopoHeight), WalletError> {
+        trace!("create ownership proof for asset {} and amount {}", asset, amount);
+
+        let storage = self.storage.read().await;
+        let balance = storage.get_balance_for(asset).await?;
+        let decompressed = balance.ciphertext.take_ciphertext()?;
+        let proof = OwnershipProof::new(&self.account.inner.keypair, balance.amount, amount, decompressed)?;
+
+        Ok((proof, balance.topoheight))
+    }
+
+    // Create a Balance Proof for the given asset
+    // This generate a proof that reveal the whole balance of the asset
+    pub async fn create_balance_proof(&self, asset: &Hash) -> Result<(BalanceProof, TopoHeight), WalletError> {
+        trace!("create balance proof for asset {}", asset);
+
+        let storage = self.storage.read().await;
+        let balance = storage.get_balance_for(asset).await?;
+        let decompressed = balance.ciphertext.take_ciphertext()?;
+        let proof = BalanceProof::new(&self.account.inner.keypair, balance.amount, decompressed);
+
+        Ok((proof, balance.topoheight))
     }
 
     // Create a transaction with the given transaction type and fee

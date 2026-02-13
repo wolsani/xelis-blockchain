@@ -2,7 +2,7 @@ use strum::{EnumDiscriminants, IntoDiscriminant, IntoStaticStr};
 use thiserror::Error;
 use chacha20poly1305::Error as CryptoError;
 use xelis_common::{
-    crypto::{Hash, elgamal::DecompressionError},
+    crypto::{Hash, elgamal::DecompressionError, proofs::ProofGenerationError},
     error::ErrorWithKind,
     transaction::{builder::{GenerationError, GenerationStateError},
     extra_data::CipherFormatError},
@@ -105,6 +105,8 @@ pub enum WalletError {
     Unsupported,
     #[error(transparent)]
     GenerationError(#[from] GenerationError),
+    #[error(transparent)]
+    ProofGenerationError(#[from] ProofGenerationError),
     #[error(transparent)]
     DecompressionError(#[from] DecompressionError),
 }
