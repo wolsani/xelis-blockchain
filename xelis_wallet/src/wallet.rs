@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     io::Write,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -583,6 +582,7 @@ impl Wallet {
     }
 
     // Mark an asset tracked by the wallet
+    // Will asynchronously request the network handler to scan for this asset if it's running
     pub async fn track_asset(&self, asset: Hash) -> Result<bool, WalletError> {
         debug!("track asset {}", asset);
         {
@@ -599,8 +599,10 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         {
             if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-                debug!("Syncing head state for newly tracked asset {}", asset);
-                network_handler.sync_head_state(&self.get_address(), Some(&HashSet::from_iter([asset])), None, false, false).await?;
+                if network_handler.is_running().await {
+                    trace!("Requesting network handler to scan for asset {}", asset);
+                    network_handler.scan_assets([asset].into()).await?;
+                }
             }
         }
 
@@ -1369,9 +1371,11 @@ impl Wallet {
             return Err(WalletError::NotOnlineMode)
         }
 
-        let mut storage = self.get_storage().write().await;
-        if topoheight > storage.get_synced_topoheight()? {
-            return Err(WalletError::RescanTopoheightTooHigh)
+        {
+            let storage = self.get_storage().read().await;
+            if topoheight > storage.get_synced_topoheight()? {
+                return Err(WalletError::RescanTopoheightTooHigh)
+            }
         }
 
         let handler = self.network_handler.lock().await;
@@ -1384,26 +1388,31 @@ impl Wallet {
                 topoheight = pruned_topo;
             }
 
-            debug!("Stopping network handler!");
-            network_handler.stop(false).await?;
-            {
-                debug!("set synced topoheight to {}", topoheight);
-                storage.set_synced_topoheight(topoheight)?;
-                storage.delete_top_block_hash()?;
-                // balances will be re-fetched from daemon
-                storage.delete_balances().await?;
-                storage.delete_assets().await?;
-                // unconfirmed balances are going to be outdated, we delete them
-                storage.delete_unconfirmed_balances().await;
-                storage.set_last_coinbase_topoheight(None)?;
-
-                if !network_handler.get_api().is_online() {
-                    debug!("reconnect API");
-                    network_handler.get_api().reconnect().await?;
+            if network_handler.is_running().await {
+                network_handler.rescan(topoheight).await?;
+            } else {
+                debug!("Stopping network handler!");
+                network_handler.stop(false).await?;
+                {
+                    debug!("set synced topoheight to {}", topoheight);
+                    let mut storage = self.get_storage().write().await;
+                    storage.set_synced_topoheight(topoheight)?;
+                    storage.delete_top_block_hash()?;
+                    // balances will be re-fetched from daemon
+                    storage.delete_balances().await?;
+                    storage.delete_assets().await?;
+                    // unconfirmed balances are going to be outdated, we delete them
+                    storage.delete_unconfirmed_balances().await;
+                    storage.set_last_coinbase_topoheight(None)?;
+    
+                    if !network_handler.get_api().is_online() {
+                        debug!("reconnect API");
+                        network_handler.get_api().reconnect().await?;
+                    }
                 }
+                debug!("Starting again network handler");
+                network_handler.start(auto_reconnect).await?;
             }
-            debug!("Starting again network handler");
-            network_handler.start(auto_reconnect).await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }

@@ -34,9 +34,9 @@ use xelis_common::{
     tokio::{
         select,
         spawn_task,
-        sync::{mpsc::channel, Mutex, Semaphore},
+        sync::{mpsc, broadcast, Mutex, Semaphore},
         task::{JoinError, JoinHandle},
-        time::sleep
+        time::sleep,
     },
     transaction::{
         extra_data::{PlaintextExtraData, PlaintextFlag},
@@ -77,6 +77,17 @@ pub enum NetworkError {
     NetworkMismatch
 }
 
+#[derive(Debug, Clone)]
+pub enum NetworkHandlerMessage {
+    Stop,
+    Rescan {
+        from_topoheight: u64
+    },
+    ScanAssets {
+        assets: HashSet<Hash>
+    }
+}
+
 pub struct NetworkHandler {
     // tokio task
     task: Mutex<Option<JoinHandle<Result<(), Error>>>>,
@@ -88,6 +99,8 @@ pub struct NetworkHandler {
     api: Arc<DaemonAPI>,
     // Concurrency to use during syncing
     concurrency: usize,
+    // Broadcast channel to automatically subscribe to the sender of the network handler
+    sender: broadcast::Sender<NetworkHandlerMessage>,
 }
 
 impl NetworkHandler {
@@ -105,11 +118,14 @@ impl NetworkHandler {
         let version = api.get_version().await?;
         debug!("Connected to daemon running version {}", version);
 
+        let (sender, _) = broadcast::channel(16);
+
         Ok(Arc::new(Self {
             task: Mutex::new(None),
             wallet,
             api,
-            concurrency
+            concurrency,
+            sender,
         }))
     }
 
@@ -144,14 +160,16 @@ impl NetworkHandler {
                 // Notify that we are offline
                 zelf.wallet.propagate_event(Event::Offline).await;
 
-                if !auto_reconnect {
+                // It was not stopped gracefully
+                // We will try to reconnect if auto_reconnect is enabled, otherwise we will stop the network handler
+                if !auto_reconnect || res.is_ok() {
                     // Turn off the websocket connection
                     if let Err(e) = zelf.api.disconnect().await {
                         error!("Error while closing websocket connection: {}", e);
                     }
 
                     break res;
-                } else {
+                } else if res.is_err() {
                     if !zelf.api.is_online() {
                         debug!("API is offline, trying to reconnect #2");
                         if !zelf.api.reconnect().await? {
@@ -169,6 +187,22 @@ impl NetworkHandler {
         Ok(())
     }
 
+    // Request a rescan from a specific topoheight, it will be used to rescan blocks and transactions from this topoheight
+    pub async fn rescan(&self, from_topoheight: u64) -> Result<(), Error> {
+        trace!("Requesting rescan from topoheight {}", from_topoheight);
+        self.sender.send(NetworkHandlerMessage::Rescan { from_topoheight })
+            .context("Error while sending rescan message to network handler")
+            .map(|_| ())
+    }
+
+    // Request a scan for specific assets, it will be used to rescan transactions for these assets
+    pub async fn scan_assets(&self, assets: HashSet<Hash>) -> Result<(), Error> {
+        trace!("Requesting scan for assets {}", assets.len());
+        self.sender.send(NetworkHandlerMessage::ScanAssets { assets })
+            .context("Error while sending scan assets message to network handler")
+            .map(|_| ())
+    }
+
     // Stop the internal loop to stop syncing
     pub async fn stop(&self, api: bool) -> Result<(), NetworkError> {
         trace!("Stopping network handler");
@@ -179,7 +213,11 @@ impl NetworkHandler {
                 handle.await??;
             } else {
                 debug!("Network handler is running, stopping it");
-                handle.abort();
+                if let Err(e) = self.sender.send(NetworkHandlerMessage::Stop) {
+                    debug!("Error while sending stop message to network handler: {}", e);
+                }
+
+                handle.await??;
 
                 // Notify that we are offline
                 self.wallet.propagate_event(Event::Offline).await;
@@ -785,7 +823,7 @@ impl NetworkHandler {
         // This channel is used to send all the blocks to the processing loop
         // No more than {concurrency} blocks and versions will be prefetch in advance
         // as the task will automatically await on the channel
-        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, RPCBlockResponse<'static>, GetContractsOutputsResult<'static>)>(self.concurrency);
+        let (data_sender, mut data_receiver) = mpsc::channel::<(CiphertextCache, u64, RPCBlockResponse<'static>, GetContractsOutputsResult<'static>)>(self.concurrency);
         let handle = {
             let api = self.api.clone();
             let address = address.clone();
@@ -1051,6 +1089,7 @@ impl NetworkHandler {
                             storage.delete_nonce().await?;
                         }
                     }
+
                     // Account is not registered, we can return safely here
                     return Ok(false)
                 }
@@ -1453,12 +1492,48 @@ impl NetworkHandler {
         let mut on_connection = self.api.on_connection().await;
         let mut on_connection_lost = self.api.on_connection_lost().await;
 
+        let mut message_recv = self.sender.subscribe();
+
         loop {
             select! {
                 biased;
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
                 // Wait on a new block ordered in DAG
+                res = message_recv.recv() => {
+                    let message = res?;
+                    match message {
+                        NetworkHandlerMessage::Stop => {
+                            debug!("Received stop message, stopping network handler");
+                            return Ok(())
+                        },
+                        NetworkHandlerMessage::ScanAssets { assets } => {
+                            debug!("Received scan assets message for assets: {}", assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "));
+                            if self.sync_head_state(&address, Some(&assets), None, false, false).await? {
+                                debug!("Assets scan detected changes, syncing new blocks");
+                                self.sync_new_blocks(&address, 0, Some(assets), false).await?;
+                            }
+                        },
+                        NetworkHandlerMessage::Rescan { from_topoheight } => {
+                            debug!("Received rescan message, rescanning from scratch");
+
+                            {
+                                let mut storage = self.wallet.get_storage().write().await;
+                                debug!("set synced topoheight to {}", from_topoheight);
+                                storage.set_synced_topoheight(from_topoheight)?;
+                                storage.delete_top_block_hash()?;
+                                // balances will be re-fetched from daemon
+                                storage.delete_balances().await?;
+                                storage.delete_assets().await?;
+                                // unconfirmed balances are going to be outdated, we delete them
+                                storage.delete_unconfirmed_balances().await;
+                                storage.set_last_coinbase_topoheight(None)?;
+                            }
+
+                            self.sync(&address, None).await?;
+                        }
+                    }
+                },
                 res = on_block_ordered.next() => {
                     let event = res?;
                     debug!("Block ordered event {} at {}", event.block_hash, event.topoheight);
@@ -1584,7 +1659,7 @@ impl NetworkHandler {
     // Sync all new blocks until the current topoheight
     // If balances is set to false, only the history will be updated
     // and not the nonce or balances
-    async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64, detected_assets: Option<HashSet<Hash>>, balances: bool) -> Result<(), Error> {
+    async fn sync_new_blocks(&self, address: &Address, min_topoheight: u64, detected_assets: Option<HashSet<Hash>>, balances: bool) -> Result<(), Error> {
         debug!("Scanning history for each asset");
         // Retrieve the last transaction ID
         // We will need it to re-org all the TXs we have stored
@@ -1617,7 +1692,7 @@ impl NetworkHandler {
             .for_each_concurrent(self.concurrency, |asset| {
                 async move {
                     debug!("fetch history for asset {}", asset);
-                    if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, current_topoheight, balances, &mut highest_nonce).await {
+                    if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, min_topoheight, balances, &mut highest_nonce).await {
                         error!("Error while syncing balance for asset {}: {}", asset, e);
                         self.wallet.propagate_event(Event::SyncError { message: e.to_string() }).await;
                     }
