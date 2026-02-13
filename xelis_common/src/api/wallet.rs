@@ -12,6 +12,7 @@ use crate::{
         Hash,
         PrivateKey,
         Signature,
+        HumanReadableProof,
     },
     serializer::Hexable,
     time::TimestampMillis,
@@ -228,6 +229,36 @@ pub struct ListTransactionsParams {
     pub limit: Option<usize>,
     // Skip the first N entries
     pub skip: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct CreateOwnershipProofParams<'a> {
+    // Asset to create the proof for
+    pub asset: Cow<'a, Hash>,
+    // If set to None, it is set to current wallet balance topoheight
+    // If set to Some, the balance at requested topoheight will be fetched
+    // and used for the proof creation
+    pub topoheight: Option<TopoHeight>,
+    // Amount to prove ownership of.
+    pub amount: u64,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct CreateBalanceProofParams<'a> {
+    // Asset to create the proof for
+    pub asset: Cow<'a, Hash>,
+    // If set to None, it is set to current wallet balance topoheight
+    // If set to Some, the balance at requested topoheight will be fetched
+    // and used for the proof creation
+    pub topoheight: Option<TopoHeight>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct VerifyHumanReadableProofParams<'a> {
+    // Proof to verify
+    pub proof: Cow<'a, HumanReadableProof>,
+    // Address of the prover, used to check the ownership of the proof
+    pub address: Cow<'a, Address>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
