@@ -71,15 +71,16 @@ where
     T: ShareableTid<'static>
 {
     // Create a new RPC handler with optional batch limit
-    pub fn new(data: T, batch_limit: impl Into<Option<usize>>) -> Self {
+    pub fn new(data: T, limit: impl Into<Option<usize>>) -> Self {
         let mut handler = Self {
             methods: HashMap::new(),
             data,
-            batch_limit: batch_limit.into()
+            batch_limit: limit.into()
         };
 
         // Internally register the "schema" method to get all registered methods
         handler.register_method_no_params_custom_return::<Vec<RpcMethodInfo>>("schema", async_handler!(schema::<T>, single));
+        handler.register_method_no_params("batch_limit", async_handler!(batch_limit::<T>, single));
 
         handler
     }
@@ -309,6 +310,15 @@ async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> R
         }).collect::<Vec<_>>();
 
     Ok(json!(methods))
+}
+
+// Get the batch limit from the RPC handler, if any
+// This is used to limit the number of requests in a batch to prevent DoS attacks
+async fn batch_limit<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> Result<Option<usize>, InternalRpcError> {
+    let rpc_handler: &RPCHandler<T> = context.get()
+        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
+
+    Ok(rpc_handler.batch_limit)
 }
 
 // Parse an RPC request from raw bytes
