@@ -155,6 +155,8 @@ pub enum DiskContext {
 #[derive(Error, Debug, EnumDiscriminants, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum BlockchainError {
+    #[error("invalid tips order for block {0}")]
+    InvalidTipsOrder(Hash),
     #[error("transaction already executed: {0}")]
     TransactionAlreadyExecuted(Hash),
     #[error("contract environment not found for version: {0}")]

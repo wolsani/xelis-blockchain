@@ -1887,6 +1887,14 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             }
+
+            let sorted_tips = blockdag::sort_tips(&*storage, block.get_tips().iter()).await?;
+            for (got, expected) in block.get_tips().iter().zip(sorted_tips) {
+                if expected != got {
+                    debug!("Invalid tips order, expected {} but got {} for this block {}", expected, got, block_hash);
+                    return Err(BlockchainError::InvalidTipsOrder(block_hash.into_owned()))
+                }
+            }
         }
 
         // verify PoW and get difficulty for this block based on tips
