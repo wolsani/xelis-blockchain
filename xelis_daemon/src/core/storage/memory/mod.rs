@@ -83,6 +83,7 @@ pub struct MemoryStorage {
     network: Network,
     cache: StorageCache,
     snapshot: Option<Snapshot<MemoryColumn>>,
+    concurrency: usize,
 
     // Top state
     top_topoheight: TopoHeight,
@@ -187,8 +188,9 @@ pub struct MemoryStorage {
 }
 
 impl MemoryStorage {
-    pub fn new(network: Network) -> Self {
+    pub fn new(network: Network, concurrency: usize) -> Self {
         Self {
+            concurrency,
             network,
             cache: StorageCache::default(),
             snapshot: None,
