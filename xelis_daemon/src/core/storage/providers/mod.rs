@@ -21,6 +21,7 @@ mod versioned;
 mod cache;
 mod state;
 mod asset_supply;
+mod concurrency;
 
 pub use asset::*;
 pub use blocks_at_height::*;
@@ -45,3 +46,4 @@ pub use versioned::*;
 pub use cache::*;
 pub use state::*;
 pub use asset_supply::*;
+pub use concurrency::*;

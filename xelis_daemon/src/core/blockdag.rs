@@ -3,11 +3,12 @@ use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}};
 use indexmap::IndexSet;
 use itertools::Either;
 use log::{debug, error, trace};
+use futures::{StreamExt, TryStreamExt, stream};
 use xelis_common::{
     block::{BlockVersion, TopoHeight, get_combined_hash_for_tips},
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
-    time::TimestampMillis
+    time::TimestampMillis,
 };
 use crate::{config::get_stable_limit, core::storage::*};
 
@@ -57,9 +58,9 @@ where
 // Hashes are sorted in descending order
 pub async fn sort_tips<D, I, H>(provider: &D, tips: I) -> Result<impl Iterator<Item = H> + ExactSizeIterator, BlockchainError>
 where
-    D: DifficultyProvider,
-    I: Iterator<Item = H> + ExactSizeIterator,
-    H: AsRef<Hash>,
+    D: DifficultyProvider + ConcurrencyProvider,
+    I: Iterator<Item = H> + ExactSizeIterator + Send + Sync,
+    H: AsRef<Hash> + Send + Sync,
 {
     trace!("sort tips");
     let tips_len = tips.len();
@@ -67,12 +68,14 @@ where
         0 => Err(BlockchainError::ExpectedTips),
         1 => Ok(Either::Left(tips)),
         _ => {
-            let mut scores: Vec<(H, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
-            for hash in tips {
-                debug!("get cumulative difficulty for tip {} for sort tips", hash.as_ref());
-                let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash.as_ref()).await?;
-                scores.push((hash, cumulative_difficulty));
-            }
+            let mut scores = stream::iter(tips)
+                .map(|hash| async move {
+                    provider.get_cumulative_difficulty_for_block_hash(hash.as_ref()).await
+                        .map(|cd| (hash, cd))
+                })
+                .buffer_unordered(provider.concurrency())
+                .boxed()
+                .try_collect::<Vec<_>>().await?;
 
             sort_descending_by_cumulative_difficulty(&mut scores);
             Ok(Either::Right(scores.into_iter().map(|(hash, _)| hash)))
@@ -83,18 +86,18 @@ where
 // determine he lowest height possible based on tips and do N+1
 pub async fn calculate_height_at_tips<'a, D, I>(provider: &D, tips: I) -> Result<u64, BlockchainError>
 where
-    D: DifficultyProvider,
-    I: Iterator<Item = &'a Hash> + ExactSizeIterator
+    D: DifficultyProvider + ConcurrencyProvider,
+    I: Iterator<Item = &'a Hash> + ExactSizeIterator + Send + Sync
 {
     trace!("calculate height at tips");
-    let mut height = 0;
     let tips_len = tips.len();
-    for hash in tips {
-        let past_height = provider.get_height_for_block_hash(hash).await?;
-        if height <= past_height {
-            height = past_height;
-        }
-    }
+    let mut height = stream::iter(tips)
+        .map(|hash| provider.get_height_for_block_hash(hash))
+        .buffer_unordered(provider.concurrency())
+        .boxed()
+        .try_fold(0, |current_height, tip_height| async move {
+            Ok::<_, BlockchainError>(current_height.max(tip_height))
+        }).await?;
 
     if tips_len != 0 {
         height += 1;
@@ -105,8 +108,8 @@ where
 // find the best tip based on cumulative difficulty of the blocks
 pub async fn find_best_tip_by_cumulative_difficulty<'a, D, I>(provider: &D, tips: I) -> Result<&'a Hash, BlockchainError>
 where
-    D: DifficultyProvider,
-    I: Iterator<Item = &'a Hash> + ExactSizeIterator
+    D: DifficultyProvider + ConcurrencyProvider,
+    I: Iterator<Item = &'a Hash> + ExactSizeIterator + Send + Sync
 {
     trace!("find best tip by cumulative difficulty");
     sort_tips(provider, tips).await?
@@ -117,21 +120,28 @@ where
 // Find the newest tip based on the timestamp of the blocks
 pub async fn find_newest_tip_by_timestamp<'a, D, I>(provider: &D, tips: I) -> Result<(&'a Hash, TimestampMillis), BlockchainError>
 where
-    D: DifficultyProvider,
-    I: Iterator<Item = &'a Hash> + ExactSizeIterator
+    D: DifficultyProvider + ConcurrencyProvider,
+    I: Iterator<Item = &'a Hash> + ExactSizeIterator + Send + Sync
 {
     trace!("find newest tip by timestamp");
     let tips_len = tips.len();
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
         _ => {
-            let mut newest_tip = None;
-            for hash in tips.into_iter() {
-                let tip_timestamp = provider.get_timestamp_for_block_hash(hash).await?;
-                if newest_tip.is_none_or(|(_, v)| v < tip_timestamp) {
-                    newest_tip = Some((hash, tip_timestamp));
-                }
-            }
+            let newest_tip = stream::iter(tips)
+                .map(|hash| async move {
+                    provider.get_timestamp_for_block_hash(hash).await
+                        .map(|timestamp| (hash, timestamp))
+                })
+                .buffer_unordered(provider.concurrency())
+                .boxed()
+                .try_fold(None, |newest, (hash, timestamp)| async move {
+                    Ok::<_, BlockchainError>(Some(match newest {
+                        None => (hash, timestamp),
+                        Some((_, newest_timestamp)) if timestamp > newest_timestamp => (hash, timestamp),
+                        Some(current_newest) => current_newest,
+                    }))
+                }).await?;
 
             newest_tip.ok_or(BlockchainError::ExpectedTips)
         }
@@ -370,7 +380,7 @@ where
 
 pub async fn find_common_base_height<'a, P>(provider: &P, tips: &IndexSet<Hash>, block_version: BlockVersion) -> Result<u64, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider,
+    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider + ConcurrencyProvider,
 {
     // Only genesis block can have 0 tips
     if tips.len() == 0 {
@@ -384,37 +394,46 @@ where
 // find the common base (block hash and block height) of all tips
 pub async fn find_common_base<'a, P, I>(provider: &P, tips: I, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider,
-    I: IntoIterator<Item = &'a Hash> + Clone,
+    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider + ConcurrencyProvider,
+    I: IntoIterator<Item = &'a Hash> + Clone + Send + Sync,
+    I::IntoIter: ExactSizeIterator + Send + Sync
 {
     debug!("find common base for tips {}", tips.clone().into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
     let chain_cache = provider.chain_cache().await;
 
-    debug!("accessing common base cache");
-    let mut cache = chain_cache.common_base_cache.lock().await;
-    debug!("common base cache locked");
-
     let combined_tips = get_combined_hash_for_tips(tips.clone().into_iter());
-    if let Some((hash, height)) = cache.get(&combined_tips) {
-        debug!("Common base found in cache: {} at height {}", hash, height);
-        return Ok((hash.clone(), *height))
-    }
+    {
+        debug!("accessing common base cache");
+        let mut cache = chain_cache.common_base_cache.lock().await;
+        debug!("common base cache locked");
 
-    let mut best_height = 0;
-    // first, we check the best (highest) height of all tips
-    for hash in tips.clone().into_iter() {
-        let height = provider.get_height_for_block_hash(hash).await?;
-        if height > best_height {
-            best_height = height;
+        if let Some((hash, height)) = cache.get(&combined_tips) {
+            debug!("Common base found in cache: {} at height {}", hash, height);
+            return Ok((hash.clone(), *height))
         }
     }
 
+    let best_height = stream::iter(tips.clone().into_iter())
+        .map(|hash| provider.get_height_for_block_hash(hash))
+        .buffer_unordered(provider.concurrency())
+        .boxed()
+        .try_fold(None, |current_height, tip_height| async move {
+            match (current_height, tip_height) {
+                (None, tip_height) => Ok(Some(tip_height)),
+                (Some(current), tip_height) if tip_height > current => Ok(Some(tip_height)),
+                (current, _) => Ok(current),
+            }
+        }).await?
+        .ok_or(BlockchainError::ExpectedTips)?;
+
+
     let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
-    let mut bases = Vec::new();
-    for hash in tips.into_iter() {
-        trace!("Searching tip base for {}", hash);
-        bases.push(find_tip_base(provider, hash, best_height, pruned_topoheight, block_version).await?);
-    }
+
+    let mut bases = stream::iter(tips.into_iter())
+        .map(|hash| find_tip_base(provider, hash, best_height, pruned_topoheight, block_version))
+        .buffer_unordered(provider.concurrency())
+        .boxed()
+        .try_collect::<Vec<_>>().await?;
 
     // check that we have at least one value
     if bases.is_empty() {
@@ -434,7 +453,12 @@ where
     debug!("Common base {} with height {} on {}", base_hash, base_height, bases.len() + 1);
 
     // save in cache
-    cache.put(combined_tips, (base_hash.clone(), base_height));
+    {
+        debug!("accessing common base cache to save common base");
+        let mut cache = chain_cache.common_base_cache.lock().await;
+        debug!("common base cache locked for write");
+        cache.put(combined_tips, (base_hash.clone(), base_height));
+    }
 
     Ok((base_hash, base_height))
 }
@@ -465,14 +489,16 @@ pub async fn build_reachability<P: DifficultyProvider>(provider: &P, hash: Hash,
 }
 
 // this function check that a TIP cannot be refered as past block in another TIP
-pub async fn verify_non_reachability<P: DifficultyProvider>(provider: &P, tips: &IndexSet<Hash>, block_version: BlockVersion) -> Result<bool, BlockchainError> {
+pub async fn verify_non_reachability<P>(provider: &P, tips: &IndexSet<Hash>, block_version: BlockVersion) -> Result<bool, BlockchainError>
+    where P: ConcurrencyProvider + DifficultyProvider
+{
     trace!("Verifying non reachability for block");
     let tips_count = tips.len();
-    let mut reach = Vec::with_capacity(tips_count);
-    for hash in tips {
-        let set = build_reachability(provider, hash.clone(), block_version).await?;
-        reach.push(set);
-    }
+    let reach = stream::iter(tips.iter())
+        .map(|hash| build_reachability(provider, hash.clone(), block_version))
+        .buffer_unordered(provider.concurrency())
+        .boxed()
+        .try_collect::<Vec<_>>().await?;
 
     for i in 0..tips_count {
         for j in 0..tips_count {
@@ -491,7 +517,7 @@ pub async fn verify_non_reachability<P: DifficultyProvider>(provider: &P, tips: 
 // We go through all tips and their tips until we have no unordered block left
 pub async fn find_lowest_height_from_mainchain<P>(provider: &P, hash: Hash) -> Result<Option<u64>, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider
+    P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider
 {
     // Lowest height found from mainchain
     let mut lowest_height = None;
@@ -503,22 +529,43 @@ where
 
     stack.push_back(hash);
 
+    enum Helper {
+        Height(u64),
+        Next(Hash),
+    }
+
     while let Some(current_hash) = stack.pop_back() {
         if processed.contains(&current_hash) {
             continue;
         }
 
         let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
-        for tip_hash in tips.iter() {
-            if provider.is_block_topological_ordered(tip_hash).await? {
-                let height = provider.get_height_for_block_hash(tip_hash).await?;
-                if lowest_height.is_none_or(|h| h > height) {
-                    lowest_height = Some(height);
+        stream::iter(tips.iter())
+            .map(|tip_hash| async {
+                let res = if provider.is_block_topological_ordered(tip_hash).await? {
+                    let height = provider.get_height_for_block_hash(tip_hash).await?;
+                    Helper::Height(height)
+                } else {
+                    Helper::Next(tip_hash.clone())
+                };
+
+                Ok::<_, BlockchainError>(res)
+            })
+            .buffer_unordered(provider.concurrency())
+            .boxed()
+            .try_fold((&mut lowest_height, &mut stack), |(lowest_height, stack), helper| async move {
+                match helper {
+                    Helper::Height(height) => {
+                        if lowest_height.is_none_or(|h| h > height) {
+                            *lowest_height = Some(height);
+                        }
+                    },
+                    Helper::Next(tip_hash) => stack.push_back(tip_hash),
                 }
-            } else {
-                stack.push_back(tip_hash.clone());
-            }
-        }
+
+                Ok((lowest_height, stack))
+            }).await?;
+
         processed.insert(current_hash);
     }
 
@@ -531,7 +578,7 @@ where
 // If a tip is not ordered, we will search its tips until we find an ordered block
 pub async fn calculate_distance_from_mainchain<P>(provider: &P, hash: &Hash) -> Result<Option<u64>, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider
+    P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider
 {
     if provider.is_block_topological_ordered(hash).await? {
         let height = provider.get_height_for_block_hash(hash).await?;
@@ -549,7 +596,7 @@ where
 // We calculate the distance from mainchain and compare it to the height
 pub async fn is_near_enough_from_main_chain<P>(provider: &P, hash: &Hash, chain_height: u64, version: BlockVersion) -> Result<bool, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider
+    P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider
 {
     let Some(lowest_ordered_height) = calculate_distance_from_mainchain(provider, hash).await? else {
         return Ok(false);
@@ -570,7 +617,7 @@ where
 // this will recursively find all tips and their difficulty
 pub async fn find_tip_work_score_internal<'a, P>(provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: TopoHeight) -> Result<(), BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider
+    P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider
 {
     trace!("Finding tip work score for {}", hash);
 
@@ -585,17 +632,26 @@ where
 
             // process its tips
             let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
-            for tip_hash in tips.iter() {
-                // if tip_hash not already processed
-                // we check if it is ordered and its topoheight is >= base_topoheight
-                // or not ordered at all
-                if !map.contains_key(tip_hash) {
+
+            stream::iter(tips.iter().filter(|tip_hash| !map.contains_key(*tip_hash)))
+                .map(|tip_hash| async move {
                     let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
-                    if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topoheight {
-                        stack.push_back(tip_hash.clone());
+                    let res = if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topoheight {
+                        Some(tip_hash.clone())
+                    } else {
+                        None
+                    };
+
+                    Ok::<Option<Hash>, BlockchainError>(res)
+                })
+                .buffer_unordered(provider.concurrency())
+                .boxed()
+                .try_fold(&mut stack, |stack, tip_hash| async move {
+                    if let Some(tip_hash) = tip_hash {
+                        stack.push_back(tip_hash);
                     }
-                }
-            }
+                    Ok(stack)
+                }).await?;
         }
     }
 
@@ -603,25 +659,28 @@ where
 }
 
 // find the sum of work done
-pub async fn find_tip_work_score<P>(
+pub async fn find_tip_work_score<'a, P, I>(
     provider: &P,
     block_hash: &Hash,
-    block_tips: impl Iterator<Item = &Hash>,
+    block_tips: I,
     block_difficulty: Option<Difficulty>,
     base_block: &Hash,
     base_block_height: u64
 ) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider + CacheProvider
+    P: DifficultyProvider + DagOrderProvider + CacheProvider + ConcurrencyProvider,
+    I: Iterator<Item = &'a Hash> + Send + Sync
 {
     trace!("find tip work score for {} at base {}", block_hash, base_block);
     let chain_cache = provider.chain_cache().await;
 
-    debug!("accessing tip work score cache for {} at height {}", block_hash, base_block_height);
-    let mut cache = chain_cache.tip_work_score_cache.lock().await;
-    if let Some(value) = cache.get(&(block_hash.clone(), base_block.clone(), base_block_height)) {
-        trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
-        return Ok(value.clone())
+    {
+        debug!("accessing tip work score cache for {} at height {}", block_hash, base_block_height);
+        let mut cache = chain_cache.tip_work_score_cache.lock().await;
+        if let Some(value) = cache.get(&(block_hash.clone(), base_block.clone(), base_block_height)) {
+            trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
+            return Ok(value.clone())
+        }
     }
 
     let mut map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
@@ -635,6 +694,7 @@ where
 
     // Lookup for each unique block difficulty in the past blocks 
     let base_topoheight = provider.get_topo_height_for_hash(base_block).await?;
+
     for hash in block_tips {
         if !map.contains_key(hash) {
             let is_ordered = provider.is_block_topological_ordered(hash).await?;
@@ -656,7 +716,12 @@ where
     }
 
     // save this result in cache
-    cache.put((block_hash.clone(), base_block.clone(), base_block_height), (set.clone(), score));
+    {
+        debug!("accessing tip work score cache to save tip work score for {} at height {}", block_hash, base_block_height);
+        let mut cache = chain_cache.tip_work_score_cache.lock().await;
+        debug!("tip work score cache locked for write");
+        cache.put((block_hash.clone(), base_block.clone(), base_block_height), (set.clone(), score));
+    }
 
     Ok((set, score))
 }
@@ -669,7 +734,7 @@ where
 // base_height is only used for the cache key
 pub async fn generate_full_order<P>(provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider + CacheProvider
+    P: DifficultyProvider + DagOrderProvider + CacheProvider + ConcurrencyProvider
 {
     trace!("generate full order for {} with base {}", hash, base);
 
@@ -714,17 +779,21 @@ where
             continue 'main;
         }
 
-        // Calculate the score for each tips above the base topoheight
-        let mut scores = Vec::new();
-        for tip_hash in block_tips.iter() {
-            let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
-            if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
-                let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
-                scores.push((tip_hash.clone(), diff));
-            } else {
-                debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
-            }
-        }
+        let mut scores = stream::iter(block_tips.iter())
+            .map(|tip_hash| async move {
+                let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
+                if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
+                    let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
+                    Ok::<Option<(Hash, Difficulty)>, BlockchainError>(Some((tip_hash.clone(), diff)))
+                } else {
+                    debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
+                    Ok::<Option<(Hash, Difficulty)>, BlockchainError>(None)
+                }
+            })
+            .buffer_unordered(provider.concurrency())
+            .filter_map(|x| async move { x.transpose() })
+            .boxed()
+            .try_collect::<Vec<_>>().await?;
 
         // We sort by ascending cumulative difficulty because it is faster
         // than doing a .reverse() on scores and give correct order for tips processing

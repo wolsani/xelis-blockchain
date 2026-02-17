@@ -272,12 +272,12 @@ async fn main() -> Result<()> {
                 None
             };
 
-            let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, blockchain_config.sled.internal_cache_size, blockchain_config.sled.internal_db_mode)?;
+            let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, blockchain_config.sled.internal_cache_size, blockchain_config.sled.internal_db_mode, blockchain_config.concurrency)?;
             start_chain(prompt, storage, config).await
         },
         #[cfg(feature = "rocksdb")]
         StorageBackend::RocksDB => {
-            let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb);
+            let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb, blockchain_config.concurrency);
             start_chain(prompt, storage, config).await
         }
     }

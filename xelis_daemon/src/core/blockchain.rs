@@ -103,13 +103,7 @@ use crate::{
         mempool::Mempool,
         nonce_checker::NonceChecker,
         simulator::Simulator,
-        storage::{
-            BlockProvider,
-            DagOrderProvider,
-            DifficultyProvider,
-            CacheProvider,
-            Storage
-        },
+        storage::*,
         tx_selector::{TxSelector, TxSelectorEntry},
         state::{ChainState, ApplicableChainState},
         hard_fork::*,
@@ -961,8 +955,8 @@ impl<S: Storage> Blockchain<S> {
     // We take the difficulty from the biggest tip, but compute the solve time from the newest tips
     pub async fn get_difficulty_at_tips<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + BlocksAtHeightProvider + CacheProvider,
-        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone,
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + BlocksAtHeightProvider + CacheProvider + ConcurrencyProvider,
+        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone + Send + Sync,
     {
         trace!("get difficulty at tips");
         let start = Instant::now();
@@ -1083,8 +1077,8 @@ impl<S: Storage> Blockchain<S> {
     // if the difficulty is valid, returns it (prevent to re-compute it)
     pub async fn verify_proof_of_work<'a, P, I>(&self, provider: &P, hash: &Hash, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + CacheProvider + BlocksAtHeightProvider,
-        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone,
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + CacheProvider + BlocksAtHeightProvider + ConcurrencyProvider,
+        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone + Send + Sync,
     {
         trace!("Verifying proof of work for block {}", hash);
         let (difficulty, p) = self.get_difficulty_at_tips(provider, tips).await?;

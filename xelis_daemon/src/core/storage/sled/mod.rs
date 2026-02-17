@@ -91,6 +91,8 @@ pub(super) const CONTRACTS_COUNT: &[u8; 4] = b"CCON";
 pub(super) const DB_VERSION: &[u8; 4] = b"VRSN";
 
 pub struct SledStorage {
+    // Async operations allowed concurrency
+    concurrency: usize,
     // Network used by the storage
     pub(super) network: Network,
     // All trees used to store data
@@ -235,7 +237,7 @@ impl Into<sled::Mode> for StorageMode {
 }
 
 impl SledStorage {
-    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: u64, mode: StorageMode) -> Result<Self, BlockchainError> {
+    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: u64, mode: StorageMode, concurrency: usize) -> Result<Self, BlockchainError> {
         let path = format!("{}{}", dir_path, network.to_string().to_lowercase());
         let config = sled::Config::new()
             .temporary(false)
@@ -252,6 +254,7 @@ impl SledStorage {
         }
 
         let mut storage = Self {
+            concurrency,
             network,
             transactions: open_tree(&sled, "transactions")?,
             txs_executed: open_tree(&sled, "txs_executed")?,

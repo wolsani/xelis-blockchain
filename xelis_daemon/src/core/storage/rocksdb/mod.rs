@@ -156,10 +156,11 @@ pub struct RocksStorage {
     network: Network,
     snapshot: Option<Snapshot>,
     cache: StorageCache,
+    concurrency: usize
 }
 
 impl RocksStorage {
-    pub fn new(dir: &str, network: Network, config: &RocksDBConfig) -> Self {
+    pub fn new(dir: &str, network: Network, config: &RocksDBConfig, concurrency: usize) -> Self {
         let cfs = Column::iter()
             .map(|column| {
                 let name = column.to_string();
@@ -218,7 +219,8 @@ impl RocksStorage {
             db: Arc::new(db),
             network,
             snapshot: None,
-            cache: StorageCache::new(None)
+            cache: StorageCache::new(None),
+            concurrency,
         }
     }
 

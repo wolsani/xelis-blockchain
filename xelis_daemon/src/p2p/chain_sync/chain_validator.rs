@@ -18,16 +18,7 @@ use crate::core::{
     blockdag,
     error::BlockchainError,
     hard_fork::{get_pow_algorithm_for_version, get_version_at_height},
-    storage::{
-        BlocksAtHeightProvider,
-        CacheProvider,
-        ChainCache,
-        DagOrderProvider,
-        DifficultyProvider,
-        MerkleHashProvider,
-        PrunedTopoheightProvider,
-        Storage
-    }
+    storage::*
 };
 use log::{debug, trace};
 
@@ -235,6 +226,12 @@ impl<S: Storage> CacheProvider for ChainValidatorProvider<'_, S> {
 
     async fn chain_cache(&self) -> &ChainCache {
         &self.parent.chain_cache
+    }
+}
+
+impl<S: Storage> ConcurrencyProvider for ChainValidatorProvider<'_, S> {
+    fn concurrency(&self) -> usize {
+        self.parent.blockchain.concurrency_limit()
     }
 }
 
