@@ -125,7 +125,9 @@ where
     pub async fn on_close(&self, state: AppStateShared) {
         {
             let mut applications = self.applications.write().await;
-            if applications.remove(&state).is_none() {
+            if let Some(client) = applications.remove(&state) {
+                client.close().await;
+            } else {
                 return;
             }
         }
