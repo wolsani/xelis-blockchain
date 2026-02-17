@@ -267,7 +267,7 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let contracts = storage.get_contracts(min, max).await?
+                let contracts = storage.get_contracts(Some(min), Some(max)).await?
                     .skip(page as usize * MAX_ITEMS_PER_PAGE)
                     .take(MAX_ITEMS_PER_PAGE)
                     .collect::<Result<IndexSet<Hash>, _>>()?;
@@ -620,6 +620,34 @@ impl<S: Storage> P2pServer<S> {
                     if next_page.is_some() {
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))
                     } else {
+                        // We must request all current local contracts
+                        let mut i = 0;
+                        let mut skip = 0;
+                        loop {
+                            info!("Requesting local contracts #{} until our topoheight {}", i, our_topoheight);
+                            let contracts = {
+                                let storage = self.blockchain.get_storage().read().await;
+                                let contracts: IndexSet<Hash> = storage.get_contracts(None, None).await?
+                                    .skip(skip)
+                                    .take(MAX_ITEMS_PER_PAGE)
+                                    .collect::<Result<IndexSet<_>, _>>()?;
+
+                                // Same logic as keys, we can get the minimum topoheight of the last contract
+                                skip += contracts.len();
+
+                                contracts
+                            };
+
+                            self.update_bootstrap_contracts(peer, &contracts, our_topoheight, stable_topoheight).await?;
+                            if contracts.len() < MAX_ITEMS_PER_PAGE {
+                                break;
+                            }
+
+                            i += 1;
+                        }
+
+                        info!("Updated {} local contracts in {} steps", skip, i);
+
                         // Go to next step
                         Some(StepRequest::Contracts(our_topoheight, stable_topoheight, None))
                     }

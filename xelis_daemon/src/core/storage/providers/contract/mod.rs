@@ -42,7 +42,9 @@ pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + Contra
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError>;
 
     // Retrieve all the contracts hashes
-    async fn get_contracts<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
+    // If minimum_topoheight is provided, it will only return contracts that have a topoheight greater or equal to it
+    // If maximum_topoheight is provided, it will only return contracts that have a topoheight less or equal to it
+    async fn get_contracts<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 
     // Delete the last topoheight for a given contract
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError>;

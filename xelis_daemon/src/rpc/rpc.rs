@@ -2203,13 +2203,14 @@ async fn get_contracts<S: Storage>(context: &Context<'_, '_>, params: GetContrac
             return Err(InternalRpcError::InvalidJSONRequest)
                 .context(format!("Maximum topoheight requested cannot be greater than {}", current_topoheight))?
         }
-        maximum
+
+        Some(maximum)
     } else {
-        current_topoheight
+        None
     };
 
     let storage = blockchain.get_storage().read().await;
-    let contracts = storage.get_contracts(params.minimum_topoheight.unwrap_or(0), maximum_topoheight).await?
+    let contracts = storage.get_contracts(params.minimum_topoheight, maximum_topoheight).await?
         .skip(params.skip.unwrap_or(0))
         .take(maximum)
         .collect::<Result<Vec<_>, BlockchainError>>()

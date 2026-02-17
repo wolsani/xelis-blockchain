@@ -74,8 +74,8 @@ impl ContractProvider for RocksStorage {
     }
 
     // Retrieve all the contracts hashes
-    async fn get_contracts<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        trace!("get contracts {}-{}", minimum_topoheight, maximum_topoheight);
+    async fn get_contracts<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get contracts {:?}-{:?}", minimum_topoheight, maximum_topoheight);
         self.iter::<Hash, Contract>(Column::Contracts, IteratorMode::Start)
             .map(|iter| iter.map(move |res| {
                 let (hash, contract) = res?;
@@ -85,11 +85,11 @@ impl ContractProvider for RocksStorage {
 
                 let mut prev_topo = Some(pointer);
                 while let Some(topo) = prev_topo {
-                    if topo < minimum_topoheight {
+                    if minimum_topoheight.is_some_and(|min| topo < min) {
                         break;
                     }
 
-                    if topo <= maximum_topoheight {
+                    if maximum_topoheight.is_some_and(|max| topo <= max) {
                         return Ok(Some(hash))
                     }
 
