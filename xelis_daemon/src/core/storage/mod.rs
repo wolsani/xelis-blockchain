@@ -9,6 +9,9 @@ pub mod sled;
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 
+pub mod memory;
+pub use memory::MemoryStorage;
+
 pub mod snapshot;
 
 pub use self::providers::*;
