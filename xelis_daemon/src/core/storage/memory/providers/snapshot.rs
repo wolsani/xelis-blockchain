@@ -3,36 +3,25 @@ use crate::core::{
     error::BlockchainError,
     storage::{SnapshotProvider, snapshot::Snapshot},
 };
-use super::super::{MemoryColumn, MemoryStorage};
+use super::super::MemoryStorage;
 
 #[async_trait]
 impl SnapshotProvider for MemoryStorage {
-    type Column = MemoryColumn;
+    type Column = ();
 
     async fn has_snapshot(&self) -> Result<bool, BlockchainError> {
-        Ok(self.snapshot.is_some())
+        Err(BlockchainError::UnsupportedOperation)
     }
 
     async fn start_snapshot(&mut self) -> Result<(), BlockchainError> {
-        if self.snapshot.is_some() {
-            return Err(BlockchainError::CommitPointAlreadyStarted);
-        }
-        self.snapshot = Some(Snapshot::new(self.cache.clone_mut()));
-        Ok(())
+        Err(BlockchainError::UnsupportedOperation)
     }
 
-    fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
-        let snapshot = self.snapshot.take()
-            .ok_or(BlockchainError::CommitPointNotStarted)?;
-
-        if apply {
-            self.cache = snapshot.cache;
-        }
-
-        Ok(())
+    fn end_snapshot(&mut self, _: bool) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
     }
 
-    fn swap_snapshot(&mut self, other: Option<Snapshot<MemoryColumn>>) -> Result<Option<Snapshot<MemoryColumn>>, BlockchainError> {
-        Ok(std::mem::replace(&mut self.snapshot, other))
+    fn swap_snapshot(&mut self, _: Option<Snapshot<()>>) -> Result<Option<Snapshot<()>>, BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
     }
 }

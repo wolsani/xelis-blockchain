@@ -25,7 +25,6 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         cache::StorageCache,
-        snapshot::Snapshot,
         types::TopoHeightMetadata,
         ClientProtocolProvider,
         DagOrderProvider,
@@ -39,12 +38,6 @@ use crate::core::{
         VersionedSupply,
     },
 };
-
-// Column type for the MemoryStorage snapshot
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MemoryColumn {
-    Placeholder,
-}
 
 // Internal account structure
 #[derive(Debug, Clone)]
@@ -82,7 +75,6 @@ struct BlockMetadata {
 pub struct MemoryStorage {
     network: Network,
     cache: StorageCache,
-    snapshot: Option<Snapshot<MemoryColumn>>,
     concurrency: usize,
 
     // Top state
@@ -193,7 +185,6 @@ impl MemoryStorage {
             concurrency,
             network,
             cache: StorageCache::default(),
-            snapshot: None,
             top_topoheight: 0,
             top_height: 0,
             pruned_topoheight: None,
