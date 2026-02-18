@@ -2343,7 +2343,8 @@ impl<S: Storage> P2pServer<S> {
                 }
             },
             Packet::BootstrapChainRequest(request) => {
-                self.handle_bootstrap_chain_request(peer, request).await?;
+                let response = self.handle_bootstrap_chain_request(peer, request).await?;
+                peer.send_packet(Packet::BootstrapChainResponse(response)).await?;
             },
             Packet::BootstrapChainResponse(response) => {
                 debug!("Received a bootstrap chain response ({:?}) from {}", response.kind(), peer);

@@ -37,7 +37,6 @@ use crate::{
             BootstrapChainResponse,
             BootstrapChainRequest,
             ObjectRequest,
-            Packet,
             StepRequest,
             StepResponse,
             MAX_ITEMS_PER_PAGE
@@ -52,7 +51,7 @@ impl<S: Storage> P2pServer<S> {
     // Handle a bootstrap chain request
     // We have differents steps available for a bootstrap sync
     // We verify that they are send in good order
-    pub async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: BootstrapChainRequest<'_>) -> Result<(), BlockchainError> {
+    pub async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: BootstrapChainRequest<'_>) -> Result<BootstrapChainResponse, BlockchainError> {
         let id = request.id();
         let request = request.step();
         let request_kind = request.kind();
@@ -432,8 +431,8 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::BlocksMetadata(blocks)
             },
         };
-        peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(id, response))).await?;
-        Ok(())
+
+        Ok(BootstrapChainResponse::new(id, response))
     }
 
     // first, retrieve chain info of selected peer
