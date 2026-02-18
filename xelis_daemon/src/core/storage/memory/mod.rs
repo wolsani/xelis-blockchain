@@ -1,10 +1,11 @@
 mod providers;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use indexmap::IndexSet;
+use pooled_arc::*;
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     asset::VersionedAssetData,
@@ -24,7 +25,7 @@ use xelis_vm::ValueCell;
 use crate::core::{
     error::BlockchainError,
     storage::{
-        cache::StorageCache,
+        cache::ChainCache,
         types::TopoHeightMetadata,
         ClientProtocolProvider,
         DagOrderProvider,
@@ -41,8 +42,7 @@ use crate::core::{
 
 // Internal account structure
 #[derive(Debug, Clone)]
-struct AccountEntry {
-    id: u64,
+pub(crate) struct AccountEntry {
     registered_at: Option<TopoHeight>,
     nonce_pointer: Option<TopoHeight>,
     multisig_pointer: Option<TopoHeight>,
@@ -50,22 +50,20 @@ struct AccountEntry {
 
 // Internal asset structure
 #[derive(Debug, Clone)]
-struct AssetEntry {
-    id: u64,
+pub(crate) struct AssetEntry {
     data_pointer: Option<TopoHeight>,
     supply_pointer: Option<TopoHeight>,
 }
 
 // Internal contract structure
 #[derive(Debug, Clone)]
-struct ContractEntry {
-    id: u64,
+pub(crate) struct ContractEntry {
     module_pointer: Option<TopoHeight>,
 }
 
 // Block metadata
 #[derive(Debug, Clone)]
-struct BlockMetadata {
+pub(crate) struct BlockMetadata {
     difficulty: Difficulty,
     cumulative_difficulty: CumulativeDifficulty,
     covariance: VarUint,
@@ -74,7 +72,7 @@ struct BlockMetadata {
 
 pub struct MemoryStorage {
     network: Network,
-    cache: StorageCache,
+    cache: ChainCache,
     concurrency: usize,
 
     // Top state
@@ -86,97 +84,89 @@ pub struct MemoryStorage {
     tips: Tips,
 
     // Block data
-    blocks: HashMap<Hash, Arc<BlockHeader>>,
-    block_metadata: HashMap<Hash, BlockMetadata>,
-    blocks_at_height: BTreeMap<u64, IndexSet<Hash>>,
+    blocks: HashMap<PooledArc<Hash>, Arc<BlockHeader>>,
+    block_metadata: HashMap<PooledArc<Hash>, BlockMetadata>,
+    blocks_at_height: BTreeMap<u64, IndexSet<PooledArc<Hash>>>,
     blocks_count: u64,
 
     // Transactions
-    transactions: HashMap<Hash, Arc<Transaction>>,
+    transactions: HashMap<PooledArc<Hash>, Arc<Transaction>>,
     txs_count: u64,
 
     // DAG order
-    topo_by_hash: HashMap<Hash, TopoHeight>,
-    hash_at_topo: BTreeMap<TopoHeight, Hash>,
+    topo_by_hash: HashMap<PooledArc<Hash>, TopoHeight>,
+    hash_at_topo: BTreeMap<TopoHeight, PooledArc<Hash>>,
 
     // TopoHeight metadata
     topoheight_metadata: BTreeMap<TopoHeight, TopoHeightMetadata>,
 
     // Client protocol
-    tx_executed_in_block: HashMap<Hash, Hash>,
-    tx_in_blocks: HashMap<Hash, Tips>,
+    tx_executed_in_block: HashMap<PooledArc<Hash>, PooledArc<Hash>>,
+    tx_in_blocks: HashMap<PooledArc<Hash>, Tips>,
 
     // Block execution order
-    block_execution_order: HashMap<Hash, u64>,
+    block_execution_order: HashMap<PooledArc<Hash>, u64>,
     blocks_execution_count: u64,
 
-    // Accounts
-    accounts: HashMap<PublicKey, AccountEntry>,
-    account_by_id: HashMap<u64, PublicKey>,
-    next_account_id: u64,
+    // Accounts: key -> entry with pointers
+    accounts: HashMap<PooledArc<PublicKey>, AccountEntry>,
 
-    // Versioned nonces: (account_id, topoheight) -> VersionedNonce
-    versioned_nonces: BTreeMap<(u64, TopoHeight), VersionedNonce>,
+    // Versioned nonces: (account, topoheight) -> VersionedNonce
+    versioned_nonces: HashMap<(PooledArc<PublicKey>, TopoHeight), VersionedNonce>,
 
-    // Assets
-    assets: HashMap<Hash, AssetEntry>,
-    asset_by_id: HashMap<u64, Hash>,
-    next_asset_id: u64,
+    // Assets: hash -> entry with pointers
+    assets: HashMap<PooledArc<Hash>, AssetEntry>,
 
-    // Versioned assets: (topoheight, asset_id) -> VersionedAssetData
-    versioned_assets: BTreeMap<(TopoHeight, u64), VersionedAssetData>,
+    // Versioned assets: (topoheight, asset) -> VersionedAssetData
+    versioned_assets: HashMap<(TopoHeight, PooledArc<Hash>), VersionedAssetData>,
 
-    // Versioned asset supply: (topoheight, asset_id) -> VersionedSupply
-    versioned_assets_supply: BTreeMap<(TopoHeight, u64), VersionedSupply>,
+    // Versioned asset supply: (topoheight, asset) -> VersionedSupply
+    versioned_assets_supply: HashMap<(TopoHeight, PooledArc<Hash>), VersionedSupply>,
 
-    // Balances: (account_id, asset_id) -> last topoheight
-    balance_pointers: HashMap<(u64, u64), TopoHeight>,
-    // (topoheight, account_id, asset_id) -> VersionedBalance
-    versioned_balances: BTreeMap<(TopoHeight, u64, u64), VersionedBalance>,
+    // Balances: (account, asset) -> last topoheight
+    balance_pointers: HashMap<PooledArc<PublicKey>, HashMap<PooledArc<Hash>, TopoHeight>>,
+    // (topoheight, account, asset) -> VersionedBalance
+    versioned_balances: HashMap<(TopoHeight, PooledArc<PublicKey>, PooledArc<Hash>), VersionedBalance>,
 
-    // Prefixed registrations: (topoheight, account_id)
-    prefixed_registrations: BTreeMap<(TopoHeight, u64), ()>,
+    // Prefixed registrations: (topoheight, account)
+    prefixed_registrations: HashSet<(TopoHeight, PooledArc<PublicKey>)>,
 
-    // Multisig: (topoheight, account_id)
-    versioned_multisig: BTreeMap<(TopoHeight, u64), Versioned<Option<MultiSigPayload>>>,
+    // Multisig: (topoheight, account)
+    versioned_multisig: HashMap<(TopoHeight, PooledArc<PublicKey>), Versioned<Option<MultiSigPayload>>>,
 
-    // Contracts
-    contracts: HashMap<Hash, ContractEntry>,
-    contract_by_id: HashMap<u64, Hash>,
-    next_contract_id: u64,
+    // Contracts: hash -> entry with pointers
+    contracts: HashMap<PooledArc<Hash>, ContractEntry>,
 
-    // Versioned contracts (modules): (topoheight, contract_id)
-    versioned_contracts: BTreeMap<(TopoHeight, u64), Versioned<Option<ContractModule>>>,
+    // Versioned contracts (modules): (topoheight, contract)
+    versioned_contracts: HashMap<(TopoHeight, PooledArc<Hash>), Versioned<Option<ContractModule>>>,
 
-    // Contract data tables
-    contract_data_table: HashMap<Vec<u8>, u64>,
-    contract_data_table_by_id: HashMap<u64, ValueCell>,
-    next_contract_data_id: u64,
-
-    // Contract data: (contract_id, data_id) -> last topoheight
-    contract_data_pointers: HashMap<(u64, u64), TopoHeight>,
-    // (topoheight, contract_id, data_id) -> VersionedContractData
-    versioned_contract_data: BTreeMap<(TopoHeight, u64, u64), VersionedContractData>,
+    // Contract data: (contract, data_key_bytes) -> last topoheight
+    contract_data_pointers: HashMap<(PooledArc<Hash>, Vec<u8>), TopoHeight>,
+    // (topoheight, contract, data_key_bytes) -> VersionedContractData
+    versioned_contract_data: HashMap<(TopoHeight, PooledArc<Hash>, Vec<u8>), VersionedContractData>,
+    // data_key_bytes -> ValueCell (for reverse lookup when iterating)
+    contract_data_keys: HashMap<Vec<u8>, ValueCell>,
 
     // Contract logs
-    contract_logs: HashMap<Hash, Vec<ContractLog>>,
+    contract_logs: HashMap<PooledArc<Hash>, Vec<ContractLog>>,
 
-    // Contract balances: (contract_id, asset_id) -> last topoheight
-    contract_balance_pointers: HashMap<(u64, u64), TopoHeight>,
-    // (topoheight, contract_id, asset_id) -> VersionedContractBalance
-    versioned_contract_balances: BTreeMap<(TopoHeight, u64, u64), VersionedContractBalance>,
+    // Contract balances: (contract, asset) -> last topoheight
+    contract_balance_pointers: HashMap<(PooledArc<Hash>, PooledArc<Hash>), TopoHeight>,
+    // (topoheight, contract, asset) -> VersionedContractBalance
+    versioned_contract_balances: HashMap<(TopoHeight, PooledArc<Hash>, PooledArc<Hash>), VersionedContractBalance>,
 
-    // Contract scheduled executions
-    delayed_executions: BTreeMap<(TopoHeight, u64), ScheduledExecution>,
-    delayed_execution_registrations: BTreeMap<(TopoHeight, u64, TopoHeight), ()>,
+    // Contract scheduled executions: (execution_topoheight, contract)
+    delayed_executions: HashMap<(TopoHeight, PooledArc<Hash>), ScheduledExecution>,
+    // (registration_topoheight, contract, execution_topoheight)
+    delayed_execution_registrations: HashSet<(TopoHeight, PooledArc<Hash>, TopoHeight)>,
 
-    // Contract event callbacks: (contract_id, event_id, listener_id) -> last topoheight
-    event_callback_pointers: HashMap<(u64, u64, u64), TopoHeight>,
-    // (topoheight, contract_id, event_id, listener_id)
-    versioned_event_callbacks: BTreeMap<(TopoHeight, u64, u64, u64), VersionedEventCallbackRegistration>,
+    // Contract event callbacks: (contract, event_id, listener_contract) -> last topoheight
+    event_callback_pointers: HashMap<(PooledArc<Hash>, u64, PooledArc<Hash>), TopoHeight>,
+    // (topoheight, contract, event_id, listener_contract)
+    versioned_event_callbacks: HashMap<(TopoHeight, PooledArc<Hash>, u64, PooledArc<Hash>), VersionedEventCallbackRegistration>,
 
-    // Contract transactions: (contract_id, tx_hash)
-    contract_transactions: BTreeMap<(u64, Hash), ()>,
+    // Contract transactions: (contract, tx_hash)
+    contract_transactions: BTreeSet<(PooledArc<Hash>, PooledArc<Hash>)>,
 }
 
 impl MemoryStorage {
@@ -184,7 +174,7 @@ impl MemoryStorage {
         Self {
             concurrency,
             network,
-            cache: StorageCache::default(),
+            cache: ChainCache::default(),
             top_topoheight: 0,
             top_height: 0,
             pruned_topoheight: None,
@@ -203,136 +193,64 @@ impl MemoryStorage {
             block_execution_order: HashMap::new(),
             blocks_execution_count: 0,
             accounts: HashMap::new(),
-            account_by_id: HashMap::new(),
-            next_account_id: 0,
-            versioned_nonces: BTreeMap::new(),
+            versioned_nonces: HashMap::new(),
             assets: HashMap::new(),
-            asset_by_id: HashMap::new(),
-            next_asset_id: 0,
-            versioned_assets: BTreeMap::new(),
-            versioned_assets_supply: BTreeMap::new(),
+            versioned_assets: HashMap::new(),
+            versioned_assets_supply: HashMap::new(),
             balance_pointers: HashMap::new(),
-            versioned_balances: BTreeMap::new(),
-            prefixed_registrations: BTreeMap::new(),
-            versioned_multisig: BTreeMap::new(),
+            versioned_balances: HashMap::new(),
+            prefixed_registrations: HashSet::new(),
+            versioned_multisig: HashMap::new(),
             contracts: HashMap::new(),
-            contract_by_id: HashMap::new(),
-            next_contract_id: 0,
-            versioned_contracts: BTreeMap::new(),
-            contract_data_table: HashMap::new(),
-            contract_data_table_by_id: HashMap::new(),
-            next_contract_data_id: 0,
+            versioned_contracts: HashMap::new(),
             contract_data_pointers: HashMap::new(),
-            versioned_contract_data: BTreeMap::new(),
+            versioned_contract_data: HashMap::new(),
+            contract_data_keys: HashMap::new(),
             contract_logs: HashMap::new(),
             contract_balance_pointers: HashMap::new(),
-            versioned_contract_balances: BTreeMap::new(),
-            delayed_executions: BTreeMap::new(),
-            delayed_execution_registrations: BTreeMap::new(),
+            versioned_contract_balances: HashMap::new(),
+            delayed_executions: HashMap::new(),
+            delayed_execution_registrations: HashSet::new(),
             event_callback_pointers: HashMap::new(),
-            versioned_event_callbacks: BTreeMap::new(),
-            contract_transactions: BTreeMap::new(),
+            versioned_event_callbacks: HashMap::new(),
+            contract_transactions: BTreeSet::new(),
         }
-    }
-
-    fn get_account_id(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
-        self.accounts.get(key)
-            .map(|a| a.id)
-            .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(self.network.is_mainnet())))
-    }
-
-    fn get_optional_account_id(&self, key: &PublicKey) -> Option<u64> {
-        self.accounts.get(key).map(|a| a.id)
     }
 
     fn get_or_create_account(&mut self, key: &PublicKey) -> &mut AccountEntry {
-        if !self.accounts.contains_key(key) {
-            let id = self.next_account_id;
-            self.next_account_id += 1;
-            let entry = AccountEntry {
-                id,
-                registered_at: None,
-                nonce_pointer: None,
-                multisig_pointer: None,
-            };
-            self.accounts.insert(key.clone(), entry);
-            self.account_by_id.insert(id, key.clone());
-        }
-        self.accounts.get_mut(key).unwrap()
-    }
-
-    fn get_asset_id(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        self.assets.get(hash)
-            .map(|a| a.id)
-            .ok_or_else(|| BlockchainError::AssetNotFound(hash.clone()))
-    }
-
-    fn get_optional_asset_id(&self, hash: &Hash) -> Option<u64> {
-        self.assets.get(hash).map(|a| a.id)
-    }
-
-    fn get_contract_id(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        self.contracts.get(hash)
-            .map(|c| c.id)
-            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
-    }
-
-    fn get_optional_contract_id(&self, hash: &Hash) -> Option<u64> {
-        self.contracts.get(hash).map(|c| c.id)
-    }
-
-    fn get_contract_hash_from_id(&self, id: u64) -> Result<Hash, BlockchainError> {
-        self.contract_by_id.get(&id)
-            .cloned()
-            .ok_or(BlockchainError::Unknown)
+        let shared_key = PooledArc::from_ref(key);
+        self.accounts.entry(shared_key).or_insert_with(|| AccountEntry {
+            registered_at: None,
+            nonce_pointer: None,
+            multisig_pointer: None,
+        })
     }
 
     fn get_or_create_contract(&mut self, hash: &Hash) -> &mut ContractEntry {
-        if !self.contracts.contains_key(hash) {
-            let id = self.next_contract_id;
-            self.next_contract_id += 1;
-            let entry = ContractEntry {
-                id,
-                module_pointer: None,
-            };
-            self.contracts.insert(hash.clone(), entry);
-            self.contract_by_id.insert(id, hash.clone());
-        }
-        self.contracts.get_mut(hash).unwrap()
+        let shared_hash = PooledArc::from_ref(hash);
+        self.contracts.entry(shared_hash).or_insert_with(|| ContractEntry {
+            module_pointer: None,
+        })
     }
 
-    fn get_contract_data_id(&self, key: &ValueCell) -> Result<u64, BlockchainError> {
-        let bytes = key.to_bytes();
-        self.contract_data_table.get(&bytes)
-            .copied()
-            .ok_or(BlockchainError::Unknown)
+    fn get_contract_data_key_bytes(key: &ValueCell) -> Vec<u8> {
+        Serializer::to_bytes(key)
     }
 
-    fn get_optional_contract_data_id(&self, key: &ValueCell) -> Option<u64> {
-        let bytes = key.to_bytes();
-        self.contract_data_table.get(&bytes).copied()
+    fn register_data_key(&mut self, key: &ValueCell) -> Vec<u8> {
+        let bytes = Self::get_contract_data_key_bytes(key);
+        self.contract_data_keys.entry(bytes.clone()).or_insert_with(|| key.clone());
+        bytes
     }
 
-    fn get_or_create_contract_data_id(&mut self, key: &ValueCell) -> u64 {
-        let bytes = key.to_bytes();
-        if let Some(&id) = self.contract_data_table.get(&bytes) {
-            id
-        } else {
-            let id = self.next_contract_data_id;
-            self.next_contract_data_id += 1;
-            self.contract_data_table.insert(bytes, id);
-            self.contract_data_table_by_id.insert(id, key.clone());
-            id
-        }
-    }
-
-    fn get_contract_data_topo_internal(&self, contract_id: u64, data_id: u64, max_topo: TopoHeight) -> Option<TopoHeight> {
-        let mut topo = self.contract_data_pointers.get(&(contract_id, data_id)).copied();
+    fn get_contract_data_topo_internal(&self, contract: &Hash, data_key: &[u8], max_topo: TopoHeight) -> Option<TopoHeight> {
+        let shared_contract = PooledArc::from_ref(contract);
+        let mut topo = self.contract_data_pointers.get(&(shared_contract.clone(), data_key.to_vec())).copied();
         while let Some(t) = topo {
             if t <= max_topo {
                 return Some(t);
             }
-            topo = self.versioned_contract_data.get(&(t, contract_id, data_id))
+            topo = self.versioned_contract_data.get(&(t, shared_contract.clone(), data_key.to_vec()))
                 .and_then(|d| d.get_previous_topoheight());
         }
         None
@@ -345,9 +263,10 @@ impl MemoryStorage {
 impl Storage for MemoryStorage {
     async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         let hash = self.get_hash_at_topo_height(topoheight).await?;
+        let shared_hash = PooledArc::from_ref(&hash);
 
         self.hash_at_topo.remove(&topoheight);
-        self.topo_by_hash.remove(&hash);
+        self.topo_by_hash.remove(&shared_hash);
         self.topoheight_metadata.remove(&topoheight);
 
         let block = self.get_block_header_by_hash(&hash).await?;

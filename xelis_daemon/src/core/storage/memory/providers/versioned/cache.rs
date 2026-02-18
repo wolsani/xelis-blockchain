@@ -8,6 +8,7 @@ use super::super::super::MemoryStorage;
 #[async_trait]
 impl VersionedCacheProvider for MemoryStorage {
     async fn clear_versioned_data_caches(&mut self) -> Result<(), BlockchainError> {
+        // No caching in memory storage
         Ok(())
     }
 }

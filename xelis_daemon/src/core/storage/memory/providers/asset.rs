@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     asset::{AssetData, VersionedAssetData},
@@ -17,8 +18,9 @@ impl AssetProvider for MemoryStorage {
     }
 
     async fn has_asset_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let asset = self.assets.get(hash).ok_or(BlockchainError::AssetNotFound(hash.clone()))?;
-        Ok(self.versioned_assets.contains_key(&(topoheight, asset.id)))
+        let _asset = self.assets.get(hash).ok_or(BlockchainError::AssetNotFound(hash.clone()))?;
+        let shared = PooledArc::from_ref(hash);
+        Ok(self.versioned_assets.contains_key(&(topoheight, shared)))
     }
 
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
@@ -26,8 +28,9 @@ impl AssetProvider for MemoryStorage {
     }
 
     async fn get_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedAssetData, BlockchainError> {
-        let asset = self.assets.get(hash).ok_or(BlockchainError::AssetNotFound(hash.clone()))?;
-        self.versioned_assets.get(&(topoheight, asset.id))
+        let _asset = self.assets.get(hash).ok_or(BlockchainError::AssetNotFound(hash.clone()))?;
+        let shared = PooledArc::from_ref(hash);
+        self.versioned_assets.get(&(topoheight, shared))
             .cloned()
             .ok_or(BlockchainError::Unknown)
     }
@@ -43,14 +46,15 @@ impl AssetProvider for MemoryStorage {
         let Some(asset) = self.assets.get(hash) else {
             return Ok(None);
         };
+        let shared = PooledArc::from_ref(hash);
         let mut topo = asset.data_pointer;
         while let Some(t) = topo {
             if t <= topoheight {
-                if let Some(data) = self.versioned_assets.get(&(t, asset.id)) {
+                if let Some(data) = self.versioned_assets.get(&(t, shared.clone())) {
                     return Ok(Some((t, data.clone())));
                 }
             }
-            topo = self.versioned_assets.get(&(t, asset.id))
+            topo = self.versioned_assets.get(&(t, shared.clone()))
                 .and_then(|d| d.get_previous_topoheight());
         }
         Ok(None)
@@ -59,14 +63,15 @@ impl AssetProvider for MemoryStorage {
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, VersionedAssetData), BlockchainError> {
         let asset = self.assets.get(hash).ok_or(BlockchainError::AssetNotFound(hash.clone()))?;
         let topoheight = asset.data_pointer.ok_or(BlockchainError::AssetNotFound(hash.clone()))?;
-        let data = self.versioned_assets.get(&(topoheight, asset.id))
+        let shared = PooledArc::from_ref(hash);
+        let data = self.versioned_assets.get(&(topoheight, shared))
             .cloned()
             .ok_or(BlockchainError::Unknown)?;
         Ok((topoheight, data))
     }
 
     async fn get_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        Ok(self.assets.keys().cloned().map(Ok))
+        Ok(self.assets.keys().map(|k| Ok(k.as_ref().clone())))
     }
 
     async fn get_assets_with_data_in_range<'a>(&'a self, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, AssetData), BlockchainError>> + 'a, BlockchainError> {
@@ -76,44 +81,32 @@ impl AssetProvider for MemoryStorage {
                 if minimum_topoheight.is_some_and(|v| topoheight < v) || maximum_topoheight.is_some_and(|v| topoheight > v) {
                     return None;
                 }
-                let data = self.versioned_assets.get(&(topoheight, asset.id))?;
-                Some(Ok((hash.clone(), topoheight, data.clone().take())))
+                let data = self.versioned_assets.get(&(topoheight, hash.clone()))?;
+                Some(Ok((hash.as_ref().clone(), topoheight, data.clone().take())))
             })
         )
     }
 
     async fn get_assets_for<'a>(&'a self, key: &'a PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        let account_id = self.get_account_id(key)?;
-        Ok(self.balance_pointers.keys()
-            .filter(move |(aid, _)| *aid == account_id)
-            .filter_map(move |(_, asset_id)| {
-                self.asset_by_id.get(asset_id).cloned().map(Ok)
-            })
+        Ok(self.balance_pointers.get(&PooledArc::from_ref(key))
+            .into_iter()
+            .flat_map(|m| m.keys())
+            .map(move |asset| Ok(asset.as_ref().clone()))
         )
     }
 
     async fn count_assets(&self) -> Result<u64, BlockchainError> {
-        Ok(self.next_asset_id)
+        Ok(self.assets.len() as u64)
     }
 
     async fn add_asset(&mut self, hash: &Hash, topoheight: TopoHeight, data: VersionedAssetData) -> Result<(), BlockchainError> {
-        let asset = if let Some(asset) = self.assets.get_mut(hash) {
-            asset.data_pointer = Some(topoheight);
-            asset.clone()
-        } else {
-            let id = self.next_asset_id;
-            self.next_asset_id += 1;
-            let entry = AssetEntry {
-                id,
-                data_pointer: Some(topoheight),
-                supply_pointer: None,
-            };
-            self.asset_by_id.insert(id, hash.clone());
-            self.assets.insert(hash.clone(), entry.clone());
-            entry
-        };
-
-        self.versioned_assets.insert((topoheight, asset.id), data);
+        let shared = PooledArc::from_ref(hash);
+        let asset = self.assets.entry(shared.clone()).or_insert_with(|| AssetEntry {
+            data_pointer: None,
+            supply_pointer: None,
+        });
+        asset.data_pointer = Some(topoheight);
+        self.versioned_assets.insert((topoheight, shared), data);
         Ok(())
     }
 }

@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use std::sync::Arc;
 use async_trait::async_trait;
 use xelis_common::{
@@ -86,8 +87,8 @@ impl BlockProvider for MemoryStorage {
             }
         }
 
-        self.blocks.insert(hash.as_ref().clone(), block.clone());
-        self.block_metadata.insert(hash.as_ref().clone(), BlockMetadata {
+        self.blocks.insert(PooledArc::from_ref(hash.as_ref()), block.clone());
+        self.block_metadata.insert(PooledArc::from_ref(hash.as_ref()), BlockMetadata {
             difficulty,
             cumulative_difficulty,
             covariance,
@@ -105,7 +106,8 @@ impl BlockProvider for MemoryStorage {
     }
 
     async fn delete_block_by_hash(&mut self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
-        let header = self.blocks.remove(hash)
+        let shared = PooledArc::from_ref(hash);
+        let header = self.blocks.remove(&shared)
             .ok_or(BlockchainError::Unknown)?;
 
         self.remove_block_hash_at_height(hash, header.get_height()).await?;
@@ -114,7 +116,7 @@ impl BlockProvider for MemoryStorage {
             self.unlink_transaction_from_block(tx, hash).await?;
         }
 
-        self.block_metadata.remove(hash);
+        self.block_metadata.remove(&shared);
 
         Ok(Immutable::Arc(header))
     }

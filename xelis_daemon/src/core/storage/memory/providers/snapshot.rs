@@ -10,7 +10,7 @@ impl SnapshotProvider for MemoryStorage {
     type Column = ();
 
     async fn has_snapshot(&self) -> Result<bool, BlockchainError> {
-        Err(BlockchainError::UnsupportedOperation)
+        Ok(false)
     }
 
     async fn start_snapshot(&mut self) -> Result<(), BlockchainError> {

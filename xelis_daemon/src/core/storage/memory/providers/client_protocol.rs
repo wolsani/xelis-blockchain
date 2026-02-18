@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::crypto::Hash;
 use crate::core::{
@@ -10,7 +11,7 @@ use super::super::MemoryStorage;
 impl ClientProtocolProvider for MemoryStorage {
     async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
         self.tx_executed_in_block.get(tx)
-            .cloned()
+            .map(|h| h.as_ref().clone())
             .ok_or(BlockchainError::Unknown)
     }
 
@@ -19,7 +20,7 @@ impl ClientProtocolProvider for MemoryStorage {
     }
 
     async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.tx_executed_in_block.get(tx).map_or(false, |h| h == block))
+        Ok(self.tx_executed_in_block.get(tx).map_or(false, |h| h.as_ref() == block))
     }
 
     async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
@@ -31,7 +32,8 @@ impl ClientProtocolProvider for MemoryStorage {
     }
 
     async fn add_block_linked_to_tx_if_not_present(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        let set = self.tx_in_blocks.entry(tx.clone()).or_default();
+        let shared_tx = PooledArc::from_ref(tx);
+        let set = self.tx_in_blocks.entry(shared_tx).or_default();
         Ok(set.insert(block.clone()))
     }
 
@@ -49,7 +51,7 @@ impl ClientProtocolProvider for MemoryStorage {
     }
 
     async fn mark_tx_as_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
-        self.tx_executed_in_block.insert(tx.clone(), block.clone());
+        self.tx_executed_in_block.insert(PooledArc::from_ref(tx), PooledArc::from_ref(block));
         Ok(())
     }
 
@@ -59,7 +61,7 @@ impl ClientProtocolProvider for MemoryStorage {
     }
 
     async fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError> {
-        self.tx_in_blocks.insert(tx.clone(), blocks.clone());
+        self.tx_in_blocks.insert(PooledArc::from_ref(tx), blocks.clone());
         Ok(())
     }
 }

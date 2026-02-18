@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use std::borrow::Cow;
 use async_trait::async_trait;
 use xelis_common::{
@@ -20,8 +21,8 @@ impl MultiSigProvider for MemoryStorage {
     }
 
     async fn get_multisig_at_topoheight_for<'a>(&'a self, key: &PublicKey, topoheight: TopoHeight) -> Result<VersionedMultiSig<'a>, BlockchainError> {
-        let id = self.get_account_id(key)?;
-        let stored = self.versioned_multisig.get(&(topoheight, id))
+        let shared_key = PooledArc::from_ref(key);
+        let stored = self.versioned_multisig.get(&(topoheight, shared_key))
             .ok_or(BlockchainError::MultisigNotFound)?;
         Ok(Versioned::new(
             stored.get().as_ref().map(|v| Cow::Owned(v.clone())),
@@ -43,17 +44,18 @@ impl MultiSigProvider for MemoryStorage {
         };
 
         let start = if pointer > maximum_topoheight
-            && self.versioned_multisig.contains_key(&(maximum_topoheight, acc.id))
+            && self.versioned_multisig.contains_key(&(maximum_topoheight, PooledArc::from_ref(account)))
         {
             maximum_topoheight
         } else {
             pointer
         };
 
+        let shared_account = PooledArc::from_ref(account);
         let mut topo = Some(start);
         while let Some(t) = topo {
             if t <= maximum_topoheight {
-                if let Some(stored) = self.versioned_multisig.get(&(t, acc.id)) {
+                if let Some(stored) = self.versioned_multisig.get(&(t, shared_account.clone())) {
                     let ms = Versioned::new(
                         stored.get().as_ref().map(|v| Cow::Owned(v.clone())),
                         stored.get_previous_topoheight(),
@@ -61,7 +63,7 @@ impl MultiSigProvider for MemoryStorage {
                     return Ok(Some((t, ms)));
                 }
             }
-            topo = self.versioned_multisig.get(&(t, acc.id))
+            topo = self.versioned_multisig.get(&(t, shared_account.clone()))
                 .and_then(|m| m.get_previous_topoheight());
         }
 
@@ -75,19 +77,18 @@ impl MultiSigProvider for MemoryStorage {
     }
 
     async fn has_multisig_at_exact_topoheight(&self, account: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let id = self.get_account_id(account)?;
-        Ok(self.versioned_multisig.contains_key(&(topoheight, id)))
+        let shared = PooledArc::from_ref(account);
+        Ok(self.versioned_multisig.contains_key(&(topoheight, shared)))
     }
 
     async fn set_last_multisig_to<'a>(&mut self, key: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
         let account = self.accounts.get_mut(key).ok_or(BlockchainError::UnknownAccount)?;
         account.multisig_pointer = Some(topoheight);
-        let id = account.id;
         let owned = Versioned::new(
             multisig.get().as_ref().map(|v| v.clone().into_owned()),
             multisig.get_previous_topoheight(),
         );
-        self.versioned_multisig.insert((topoheight, id), owned);
+        self.versioned_multisig.insert((topoheight, PooledArc::from_ref(key)), owned);
         Ok(())
     }
 }

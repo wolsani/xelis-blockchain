@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use std::borrow::Cow;
 use async_trait::async_trait;
 use anyhow::Context;
@@ -34,12 +35,11 @@ impl ContractProvider for MemoryStorage {
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError> {
         let entry = self.get_or_create_contract(hash);
         entry.module_pointer = Some(topoheight);
-        let id = entry.id;
         let owned = Versioned::new(
             contract.get().as_ref().map(|v| v.clone().into_owned()),
             contract.get_previous_topoheight(),
         );
-        self.versioned_contracts.insert((topoheight, id), owned);
+        self.versioned_contracts.insert((topoheight, PooledArc::from_ref(hash)), owned);
         Ok(())
     }
 
@@ -48,8 +48,8 @@ impl ContractProvider for MemoryStorage {
     }
 
     async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContractModule<'a>, BlockchainError> {
-        let contract_id = self.get_contract_id(hash)?;
-        let stored = self.versioned_contracts.get(&(topoheight, contract_id))
+        let shared = PooledArc::from_ref(hash);
+        let stored = self.versioned_contracts.get(&(topoheight, shared))
             .ok_or(BlockchainError::ContractNotFound(hash.clone()))?;
         Ok(Versioned::new(
             stored.get().as_ref().map(|v| Cow::Owned(v.clone())),
@@ -60,10 +60,11 @@ impl ContractProvider for MemoryStorage {
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError> {
         let Some(entry) = self.contracts.get(hash) else { return Ok(None); };
         let Some(pointer) = entry.module_pointer else { return Ok(None); };
+        let shared = PooledArc::from_ref(hash);
         let mut topo = Some(pointer);
         while let Some(t) = topo {
             if t <= maximum_topoheight {
-                if let Some(stored) = self.versioned_contracts.get(&(t, entry.id)) {
+                if let Some(stored) = self.versioned_contracts.get(&(t, shared.clone())) {
                     let module = Versioned::new(
                         stored.get().as_ref().map(|v| Cow::Owned(v.clone())),
                         stored.get_previous_topoheight(),
@@ -71,7 +72,7 @@ impl ContractProvider for MemoryStorage {
                     return Ok(Some((t, module)));
                 }
             }
-            topo = self.versioned_contracts.get(&(t, entry.id))
+            topo = self.versioned_contracts.get(&(t, shared.clone()))
                 .and_then(|m| m.get_previous_topoheight());
         }
         Ok(None)
@@ -92,7 +93,7 @@ impl ContractProvider for MemoryStorage {
                     false
                 }
             })
-            .map(|(hash, _)| Ok(hash.clone()))
+            .map(|(hash, _)| Ok(hash.as_ref().clone()))
         )
     }
 
@@ -106,7 +107,8 @@ impl ContractProvider for MemoryStorage {
     async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         let Some(entry) = self.contracts.get(hash) else { return Ok(false); };
         let Some(pointer) = entry.module_pointer else { return Ok(false); };
-        Ok(self.versioned_contracts.get(&(pointer, entry.id))
+        let shared = PooledArc::from_ref(hash);
+        Ok(self.versioned_contracts.get(&(pointer, shared))
             .map_or(false, |v| v.get().is_some()))
     }
 
@@ -115,45 +117,45 @@ impl ContractProvider for MemoryStorage {
     }
 
     async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let contract_id = self.get_contract_id(hash)?;
-        Ok(self.versioned_contracts.get(&(topoheight, contract_id))
+        let shared = PooledArc::from_ref(hash);
+        Ok(self.versioned_contracts.get(&(topoheight, shared))
             .map_or(false, |v| v.get().is_some()))
     }
 
     async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let contract_id = self.get_contract_id(hash)?;
-        Ok(self.versioned_contracts.contains_key(&(topoheight, contract_id)))
+        let shared = PooledArc::from_ref(hash);
+        Ok(self.versioned_contracts.contains_key(&(topoheight, shared)))
     }
 
     async fn has_contract_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         let Some(entry) = self.contracts.get(hash) else { return Ok(false); };
         let Some(pointer) = entry.module_pointer else { return Ok(false); };
-        let mut topo = Some(pointer);
-        while let Some(t) = topo {
-            if t <= topoheight {
-                return Ok(self.versioned_contracts.get(&(t, entry.id))
+        let shared = PooledArc::from_ref(hash);
+        let mut t = Some(pointer);
+        while let Some(current) = t {
+            if current <= topoheight {
+                return Ok(self.versioned_contracts.get(&(current, shared.clone()))
                     .map_or(false, |v| v.get().is_some()));
             }
-            topo = self.versioned_contracts.get(&(t, entry.id))
+            t = self.versioned_contracts.get(&(current, shared.clone()))
                 .and_then(|m| m.get_previous_topoheight());
         }
         Ok(false)
     }
 
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
-        Ok(self.next_contract_id)
+        Ok(self.contracts.len() as u64)
     }
 
     async fn add_tx_for_contract(&mut self, contract: &Hash, tx: &Hash) -> Result<(), BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
-        self.contract_transactions.insert((contract_id, tx.clone()), ());
+        self.contract_transactions.insert((PooledArc::from_ref(contract), PooledArc::from_ref(tx)));
         Ok(())
     }
 
     async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
-        Ok(self.contract_transactions.range((contract_id, Hash::zero())..=(contract_id, Hash::max()))
-            .map(|((_, hash), _)| Ok(hash.clone()))
+        let shared = PooledArc::from_ref(contract);
+        Ok(self.contract_transactions.range((shared.clone(), PooledArc::from_ref(&Hash::zero()))..=(shared, PooledArc::from_ref(&Hash::max())))
+            .map(|(_, hash)| Ok(hash.as_ref().clone()))
         )
     }
 }

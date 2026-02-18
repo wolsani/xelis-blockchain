@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
@@ -12,7 +13,7 @@ use super::super::MemoryStorage;
 #[async_trait]
 impl AccountProvider for MemoryStorage {
     async fn count_accounts(&self) -> Result<u64, BlockchainError> {
-        Ok(self.next_account_id)
+        Ok(self.accounts.len() as u64)
     }
 
     async fn get_account_registration_topoheight(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError> {
@@ -22,10 +23,10 @@ impl AccountProvider for MemoryStorage {
     }
 
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        let shared = PooledArc::from_ref(key);
         let account = self.get_or_create_account(key);
         account.registered_at = Some(topoheight);
-        let id = self.accounts.get(key).unwrap().id;
-        self.prefixed_registrations.insert((topoheight, id), ());
+        self.prefixed_registrations.insert((topoheight, shared));
         Ok(())
     }
 
@@ -61,7 +62,7 @@ impl AccountProvider for MemoryStorage {
                 }
                 true
             })
-            .map(|(key, _)| Ok(key.clone()))
+            .map(|(key, _)| Ok(key.as_ref().clone()))
         )
     }
 
@@ -77,21 +78,23 @@ impl AccountProvider for MemoryStorage {
             }
         }
 
+        let shared_key = PooledArc::from_ref(key);
         // Check balance pointers for this account
-        for (&(aid, asset_id), &pointer_topo) in &self.balance_pointers {
-            if aid != account.id {
-                continue;
-            }
-            let mut topo = Some(pointer_topo);
-            while let Some(t) = topo {
-                if t < minimum_topoheight {
-                    break;
+        if let Some(balances) = self.balance_pointers.get(&shared_key) {
+            for (asset, &pointer_topo) in balances {
+                let mut topo = Some(pointer_topo);
+                while let Some(t) = topo {
+                    if t < minimum_topoheight {
+                        break;
+                    }
+
+                    if t <= maximum_topoheight {
+                        return Ok(true);
+                    }
+
+                    topo = self.versioned_balances.get(&(t, shared_key.clone(), asset.clone()))
+                        .and_then(|b| b.get_previous_topoheight());
                 }
-                if t <= maximum_topoheight {
-                    return Ok(true);
-                }
-                topo = self.versioned_balances.get(&(t, account.id, asset_id))
-                    .and_then(|b| b.get_previous_topoheight());
             }
         }
 

@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
@@ -18,8 +19,9 @@ impl DagOrderProvider for MemoryStorage {
     }
 
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.topo_by_hash.insert(hash.clone(), topoheight);
-        self.hash_at_topo.insert(topoheight, hash.clone());
+        let shared = PooledArc::from_ref(hash);
+        self.topo_by_hash.insert(shared.clone(), topoheight);
+        self.hash_at_topo.insert(topoheight, shared);
         Ok(())
     }
 
@@ -35,7 +37,7 @@ impl DagOrderProvider for MemoryStorage {
 
     async fn get_hash_at_topo_height(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         self.hash_at_topo.get(&topoheight)
-            .cloned()
+            .map(|h| h.as_ref().clone())
             .ok_or(BlockchainError::Unknown)
     }
 
@@ -45,8 +47,7 @@ impl DagOrderProvider for MemoryStorage {
 
     async fn get_orphaned_blocks<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         Ok(self.blocks.keys()
-            .filter(|hash| !self.topo_by_hash.contains_key(hash))
-            .cloned()
-            .map(Ok))
+            .filter(|hash| !self.topo_by_hash.contains_key(hash.as_ref()))
+            .map(|h| Ok(h.as_ref().clone())))
     }
 }

@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
@@ -21,10 +22,10 @@ impl ContractEventCallbackProvider for MemoryStorage {
         version: VersionedEventCallbackRegistration,
         topoheight: TopoHeight,
     ) -> Result<(), BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
-        let listener_id = self.get_contract_id(listener_contract)?;
-        self.event_callback_pointers.insert((contract_id, event_id, listener_id), topoheight);
-        self.versioned_event_callbacks.insert((topoheight, contract_id, event_id, listener_id), version);
+        let shared_contract = PooledArc::from_ref(contract);
+        let shared_listener = PooledArc::from_ref(listener_contract);
+        self.event_callback_pointers.insert((shared_contract.clone(), event_id, shared_listener.clone()), topoheight);
+        self.versioned_event_callbacks.insert((topoheight, shared_contract, event_id, shared_listener), version);
         Ok(())
     }
 
@@ -35,20 +36,20 @@ impl ContractEventCallbackProvider for MemoryStorage {
         listener_contract: &Hash,
         max_topoheight: TopoHeight,
     ) -> Result<Option<(TopoHeight, VersionedEventCallbackRegistration)>, BlockchainError> {
-        let Some(contract_id) = self.get_optional_contract_id(contract) else { return Ok(None); };
-        let Some(listener_id) = self.get_optional_contract_id(listener_contract) else { return Ok(None); };
-        let Some(&pointer) = self.event_callback_pointers.get(&(contract_id, event_id, listener_id)) else {
+        let shared_contract = PooledArc::from_ref(contract);
+        let shared_listener = PooledArc::from_ref(listener_contract);
+        let Some(&pointer) = self.event_callback_pointers.get(&(shared_contract.clone(), event_id, shared_listener.clone())) else {
             return Ok(None);
         };
 
         let mut topo = Some(pointer);
         while let Some(t) = topo {
             if t <= max_topoheight {
-                if let Some(ver) = self.versioned_event_callbacks.get(&(t, contract_id, event_id, listener_id)) {
+                if let Some(ver) = self.versioned_event_callbacks.get(&(t, shared_contract.clone(), event_id, shared_listener.clone())) {
                     return Ok(Some((t, ver.clone())));
                 }
             }
-            topo = self.versioned_event_callbacks.get(&(t, contract_id, event_id, listener_id))
+            topo = self.versioned_event_callbacks.get(&(t, shared_contract.clone(), event_id, shared_listener.clone()))
                 .and_then(|v| v.get_previous_topoheight());
         }
 
@@ -61,19 +62,18 @@ impl ContractEventCallbackProvider for MemoryStorage {
         event_id: u64,
         max_topoheight: TopoHeight,
     ) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, VersionedEventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
+        let shared_contract = PooledArc::from_ref(contract);
         let listeners: Vec<_> = self.event_callback_pointers.iter()
-            .filter(move |(&(cid, eid, _), _)| cid == contract_id && eid == event_id)
-            .filter_map(move |(&(_, _, listener_id), &pointer)| {
+            .filter(move |(&(ref cid, eid, _), _)| cid.as_ref() == contract && eid == event_id)
+            .filter_map(move |(&(_, _, ref listener), &pointer)| {
                 let mut topo = Some(pointer);
                 while let Some(t) = topo {
                     if t <= max_topoheight {
-                        if let Some(ver) = self.versioned_event_callbacks.get(&(t, contract_id, event_id, listener_id)) {
-                            let hash = self.get_contract_hash_from_id(listener_id).ok()?;
-                            return Some(Ok((hash, t, ver.clone())));
+                        if let Some(ver) = self.versioned_event_callbacks.get(&(t, shared_contract.clone(), event_id, listener.clone())) {
+                            return Some(Ok((listener.as_ref().clone(), t, ver.clone())));
                         }
                     }
-                    topo = self.versioned_event_callbacks.get(&(t, contract_id, event_id, listener_id))
+                    topo = self.versioned_event_callbacks.get(&(t, shared_contract.clone(), event_id, listener.clone()))
                         .and_then(|v| v.get_previous_topoheight());
                 }
                 None
@@ -88,20 +88,19 @@ impl ContractEventCallbackProvider for MemoryStorage {
         event_id: u64,
         max_topoheight: TopoHeight,
     ) -> Result<impl Iterator<Item = Result<(Hash, EventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
+        let shared_contract = PooledArc::from_ref(contract);
         let listeners: Vec<_> = self.event_callback_pointers.iter()
-            .filter(move |(&(cid, eid, _), _)| cid == contract_id && eid == event_id)
-            .filter_map(move |(&(_, _, listener_id), &pointer)| {
+            .filter(move |(&(ref cid, eid, _), _)| cid.as_ref() == contract && eid == event_id)
+            .filter_map(move |(&(_, _, ref listener), &pointer)| {
                 let mut topo = Some(pointer);
                 while let Some(t) = topo {
                     if t <= max_topoheight {
-                        if let Some(ver) = self.versioned_event_callbacks.get(&(t, contract_id, event_id, listener_id)) {
+                        if let Some(ver) = self.versioned_event_callbacks.get(&(t, shared_contract.clone(), event_id, listener.clone())) {
                             let callback = ver.get().as_ref()?.clone();
-                            let hash = self.get_contract_hash_from_id(listener_id).ok()?;
-                            return Some(Ok((hash, callback)));
+                            return Some(Ok((listener.as_ref().clone(), callback)));
                         }
                     }
-                    topo = self.versioned_event_callbacks.get(&(t, contract_id, event_id, listener_id))
+                    topo = self.versioned_event_callbacks.get(&(t, shared_contract.clone(), event_id, listener.clone()))
                         .and_then(|v| v.get_previous_topoheight());
                 }
                 None

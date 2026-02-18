@@ -13,7 +13,7 @@ impl TipsProvider for MemoryStorage {
 
     async fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
         self.tips = tips.clone();
-        self.cache.chain.tips = tips.clone();
+        self.cache.tips = tips.clone();
         Ok(())
     }
 }

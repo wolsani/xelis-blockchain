@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
@@ -13,74 +14,63 @@ use super::super::super::MemoryStorage;
 #[async_trait]
 impl ContractBalanceProvider for MemoryStorage {
     async fn has_contract_balance_for(&self, contract: &Hash, asset: &Hash) -> Result<bool, BlockchainError> {
-        let Some(contract_id) = self.get_optional_contract_id(contract) else { return Ok(false); };
-        let Some(asset_id) = self.get_optional_asset_id(asset) else { return Ok(false); };
-        Ok(self.contract_balance_pointers.contains_key(&(contract_id, asset_id)))
+        Ok(self.contract_balance_pointers.contains_key(&(PooledArc::from_ref(contract), PooledArc::from_ref(asset))))
     }
 
     async fn has_contract_balance_at_exact_topoheight(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
-        let asset_id = self.get_asset_id(asset)?;
-        Ok(self.versioned_contract_balances.contains_key(&(topoheight, contract_id, asset_id)))
+        Ok(self.versioned_contract_balances.contains_key(&(topoheight, PooledArc::from_ref(contract), PooledArc::from_ref(asset))))
     }
 
     async fn get_contract_balance_at_exact_topoheight(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedContractBalance, BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
-        let asset_id = self.get_asset_id(asset)?;
-        self.versioned_contract_balances.get(&(topoheight, contract_id, asset_id))
+        self.versioned_contract_balances.get(&(topoheight, PooledArc::from_ref(contract), PooledArc::from_ref(asset)))
             .cloned()
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_contract_balance_at_maximum_topoheight(&self, contract: &Hash, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractBalance)>, BlockchainError> {
-        let Some(contract_id) = self.get_optional_contract_id(contract) else { return Ok(None); };
-        let Some(asset_id) = self.get_optional_asset_id(asset) else { return Ok(None); };
-        let mut topo = self.contract_balance_pointers.get(&(contract_id, asset_id)).copied();
+        let shared_contract = PooledArc::from_ref(contract);
+        let shared_asset = PooledArc::from_ref(asset);
+        let mut topo = self.contract_balance_pointers.get(&(shared_contract.clone(), shared_asset.clone())).copied();
         while let Some(t) = topo {
             if t <= maximum_topoheight {
-                if let Some(bal) = self.versioned_contract_balances.get(&(t, contract_id, asset_id)) {
+                if let Some(bal) = self.versioned_contract_balances.get(&(t, shared_contract.clone(), shared_asset.clone())) {
                     return Ok(Some((t, bal.clone())));
                 }
             }
-            topo = self.versioned_contract_balances.get(&(t, contract_id, asset_id))
+            topo = self.versioned_contract_balances.get(&(t, shared_contract.clone(), shared_asset.clone()))
                 .and_then(|b| b.get_previous_topoheight());
         }
         Ok(None)
     }
 
     async fn get_last_topoheight_for_contract_balance(&self, contract: &Hash, asset: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
-        let Some(contract_id) = self.get_optional_contract_id(contract) else { return Ok(None); };
-        let Some(asset_id) = self.get_optional_asset_id(asset) else { return Ok(None); };
-        Ok(self.contract_balance_pointers.get(&(contract_id, asset_id)).copied())
+        Ok(self.contract_balance_pointers.get(&(PooledArc::from_ref(contract), PooledArc::from_ref(asset))).copied())
     }
 
     async fn get_last_contract_balance(&self, contract: &Hash, asset: &Hash) -> Result<(TopoHeight, VersionedContractBalance), BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
-        let asset_id = self.get_asset_id(asset)?;
-        let pointer = self.contract_balance_pointers.get(&(contract_id, asset_id))
+        let shared_contract = PooledArc::from_ref(contract);
+        let shared_asset = PooledArc::from_ref(asset);
+        let pointer = self.contract_balance_pointers.get(&(shared_contract.clone(), shared_asset.clone()))
             .copied()
             .ok_or(BlockchainError::Unknown)?;
-        let balance = self.versioned_contract_balances.get(&(pointer, contract_id, asset_id))
+        let balance = self.versioned_contract_balances.get(&(pointer, shared_contract, shared_asset))
             .cloned()
             .ok_or(BlockchainError::Unknown)?;
         Ok((pointer, balance))
     }
 
     async fn get_contract_assets_for<'a>(&'a self, contract: &'a Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
         Ok(self.contract_balance_pointers.keys()
-            .filter(move |(cid, _)| *cid == contract_id)
-            .filter_map(move |(_, asset_id)| {
-                self.asset_by_id.get(asset_id).cloned().map(Ok)
-            })
+            .filter(move |(c, _)| c.as_ref() == contract)
+            .map(move |(_, asset)| Ok(asset.as_ref().clone()))
         )
     }
 
     async fn set_last_contract_balance_to(&mut self, contract: &Hash, asset: &Hash, topoheight: TopoHeight, balance: VersionedContractBalance) -> Result<(), BlockchainError> {
-        let contract_id = self.get_contract_id(contract)?;
-        let asset_id = self.get_asset_id(asset)?;
-        self.contract_balance_pointers.insert((contract_id, asset_id), topoheight);
-        self.versioned_contract_balances.insert((topoheight, contract_id, asset_id), balance);
+        let shared_contract = PooledArc::from_ref(contract);
+        let shared_asset = PooledArc::from_ref(asset);
+        self.contract_balance_pointers.insert((shared_contract.clone(), shared_asset.clone()), topoheight);
+        self.versioned_contract_balances.insert((topoheight, shared_contract, shared_asset), balance);
         Ok(())
     }
 }

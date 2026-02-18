@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use std::sync::Arc;
 use async_trait::async_trait;
 use futures::stream;
@@ -34,9 +35,8 @@ impl TransactionProvider for MemoryStorage {
 
     async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Stream<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         let iter = self.transactions.keys()
-            .filter(|hash| !self.tx_executed_in_block.contains_key(hash))
-            .cloned()
-            .map(Ok);
+            .filter(|hash| !self.tx_executed_in_block.contains_key(hash.as_ref()))
+            .map(|h| Ok(h.as_ref().clone()));
         Ok(stream::iter(iter))
     }
 
@@ -45,18 +45,18 @@ impl TransactionProvider for MemoryStorage {
     }
 
     async fn add_transaction(&mut self, hash: &Hash, transaction: &Transaction) -> Result<(), BlockchainError> {
-        self.transactions.insert(hash.clone(), Arc::new(transaction.clone()));
+        let shared = PooledArc::from_ref(hash);
+        self.transactions.insert(shared, Arc::new(transaction.clone()));
         Ok(())
     }
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
-        let tx = self.transactions.remove(hash)
+        let shared = PooledArc::from_ref(hash);
+        let tx = self.transactions.remove(&shared)
             .ok_or(BlockchainError::Unknown)?;
 
         if let Some(contract) = tx.invoked_contract() {
-            if let Some(contract_id) = self.get_optional_contract_id(contract) {
-                self.contract_transactions.remove(&(contract_id, hash.clone()));
-            }
+            self.contract_transactions.remove(&(PooledArc::from_ref(contract), shared));
         }
 
         Ok(Immutable::Arc(tx))

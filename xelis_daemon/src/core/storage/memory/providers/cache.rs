@@ -13,10 +13,10 @@ impl CacheProvider for MemoryStorage {
     }
 
     async fn chain_cache_mut(&mut self) -> Result<&mut ChainCache, BlockchainError> {
-        Ok(&mut self.cache.chain)
+        Ok(&mut self.cache)
     }
 
     async fn chain_cache(&self) -> &ChainCache {
-        &self.cache.chain
+        &self.cache
     }
 }

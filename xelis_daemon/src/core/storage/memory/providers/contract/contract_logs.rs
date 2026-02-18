@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     contract::ContractLog,
@@ -22,12 +23,12 @@ impl ContractLogsProvider for MemoryStorage {
     }
 
     async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, logs: &Vec<ContractLog>) -> Result<(), BlockchainError> {
-        self.contract_logs.insert(tx_hash.clone(), logs.clone());
+        self.contract_logs.insert(PooledArc::from_ref(tx_hash), logs.clone());
         Ok(())
     }
 
     async fn delete_contract_logs_for_caller(&mut self, tx_hash: &Hash) -> Result<(), BlockchainError> {
-        self.contract_logs.remove(tx_hash);
+        self.contract_logs.remove(&PooledArc::from_ref(tx_hash));
         Ok(())
     }
 }

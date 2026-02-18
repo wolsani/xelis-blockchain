@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     account::VersionedNonce,
@@ -17,8 +18,8 @@ impl NonceProvider for MemoryStorage {
     }
 
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let id = self.get_account_id(key)?;
-        Ok(self.versioned_nonces.contains_key(&(id, topoheight)))
+        let shared_key = PooledArc::from_ref(key);
+        Ok(self.versioned_nonces.contains_key(&(shared_key, topoheight)))
     }
 
     async fn get_last_topoheight_for_nonce(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError> {
@@ -31,15 +32,16 @@ impl NonceProvider for MemoryStorage {
         let account = self.accounts.get(key).ok_or(BlockchainError::UnknownAccount)?;
         let topoheight = account.nonce_pointer
             .ok_or_else(|| BlockchainError::NoNonce(key.as_address(self.is_mainnet())))?;
-        let nonce = self.versioned_nonces.get(&(account.id, topoheight))
+        let shared_key = PooledArc::from_ref(key);
+        let nonce = self.versioned_nonces.get(&(shared_key, topoheight))
             .cloned()
             .ok_or(BlockchainError::Unknown)?;
         Ok((topoheight, nonce))
     }
 
     async fn get_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<VersionedNonce, BlockchainError> {
-        let id = self.get_account_id(key)?;
-        self.versioned_nonces.get(&(id, topoheight))
+        let shared_key = PooledArc::from_ref(key);
+        self.versioned_nonces.get(&(shared_key, topoheight))
             .cloned()
             .ok_or(BlockchainError::Unknown)
     }
@@ -52,8 +54,9 @@ impl NonceProvider for MemoryStorage {
             return Ok(None);
         };
 
+        let shared_key = PooledArc::from_ref(key);
         let start = if pointer > maximum_topoheight
-            && self.versioned_nonces.contains_key(&(account.id, maximum_topoheight))
+            && self.versioned_nonces.contains_key(&(shared_key.clone(), maximum_topoheight))
         {
             maximum_topoheight
         } else {
@@ -63,11 +66,11 @@ impl NonceProvider for MemoryStorage {
         let mut topo = Some(start);
         while let Some(t) = topo {
             if t <= maximum_topoheight {
-                if let Some(nonce) = self.versioned_nonces.get(&(account.id, t)) {
+                if let Some(nonce) = self.versioned_nonces.get(&(shared_key.clone(), t)) {
                     return Ok(Some((t, nonce.clone())));
                 }
             }
-            topo = self.versioned_nonces.get(&(account.id, t))
+            topo = self.versioned_nonces.get(&(shared_key.clone(), t))
                 .and_then(|n| n.get_previous_topoheight());
         }
 
@@ -76,9 +79,9 @@ impl NonceProvider for MemoryStorage {
 
     async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: TopoHeight, nonce: &VersionedNonce) -> Result<(), BlockchainError> {
         let account = self.get_or_create_account(key);
-        let id = account.id;
         account.nonce_pointer = Some(topoheight);
-        self.versioned_nonces.insert((id, topoheight), nonce.clone());
+        let shared_key = PooledArc::from_ref(key);
+        self.versioned_nonces.insert((shared_key, topoheight), nonce.clone());
         Ok(())
     }
 }

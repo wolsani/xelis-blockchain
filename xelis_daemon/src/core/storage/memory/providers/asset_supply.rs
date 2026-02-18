@@ -1,3 +1,4 @@
+use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
@@ -16,13 +17,19 @@ impl AssetCirculatingSupplyProvider for MemoryStorage {
     }
 
     async fn has_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let asset_id = self.get_asset_id(asset)?;
-        Ok(self.versioned_assets_supply.contains_key(&(topoheight, asset_id)))
+        if !self.assets.contains_key(asset) {
+            return Err(BlockchainError::AssetNotFound(asset.clone()));
+        }
+        let shared = PooledArc::from_ref(asset);
+        Ok(self.versioned_assets_supply.contains_key(&(topoheight, shared)))
     }
 
     async fn get_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedSupply, BlockchainError> {
-        let asset_id = self.get_asset_id(asset)?;
-        self.versioned_assets_supply.get(&(topoheight, asset_id))
+        if !self.assets.contains_key(asset) {
+            return Err(BlockchainError::AssetNotFound(asset.clone()));
+        }
+        let shared = PooledArc::from_ref(asset);
+        self.versioned_assets_supply.get(&(topoheight, shared))
             .cloned()
             .ok_or(BlockchainError::Unknown)
     }
@@ -35,8 +42,9 @@ impl AssetCirculatingSupplyProvider for MemoryStorage {
             return Ok(None);
         };
 
+        let shared = PooledArc::from_ref(asset);
         let start = if pointer > maximum_topoheight
-            && self.versioned_assets_supply.contains_key(&(maximum_topoheight, asset_entry.id))
+            && self.versioned_assets_supply.contains_key(&(maximum_topoheight, shared.clone()))
         {
             maximum_topoheight
         } else {
@@ -46,11 +54,11 @@ impl AssetCirculatingSupplyProvider for MemoryStorage {
         let mut topo = Some(start);
         while let Some(t) = topo {
             if t <= maximum_topoheight {
-                if let Some(supply) = self.versioned_assets_supply.get(&(t, asset_entry.id)) {
+                if let Some(supply) = self.versioned_assets_supply.get(&(t, shared.clone())) {
                     return Ok(Some((t, supply.clone())));
                 }
             }
-            topo = self.versioned_assets_supply.get(&(t, asset_entry.id))
+            topo = self.versioned_assets_supply.get(&(t, shared.clone()))
                 .and_then(|s| s.get_previous_topoheight());
         }
 
@@ -60,8 +68,8 @@ impl AssetCirculatingSupplyProvider for MemoryStorage {
     async fn set_last_circulating_supply_for_asset(&mut self, hash: &Hash, topoheight: TopoHeight, supply: &VersionedSupply) -> Result<(), BlockchainError> {
         let asset = self.assets.get_mut(hash).ok_or(BlockchainError::AssetNotFound(hash.clone()))?;
         asset.supply_pointer = Some(topoheight);
-        let id = asset.id;
-        self.versioned_assets_supply.insert((topoheight, id), supply.clone());
+        let shared = PooledArc::from_ref(hash);
+        self.versioned_assets_supply.insert((topoheight, shared), supply.clone());
         Ok(())
     }
 }

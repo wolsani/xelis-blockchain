@@ -27,6 +27,7 @@ humantime = "2.1.0"
 human_bytes = "0.4.2"
 tokio-socks = "0.5.2"
 snap = "1.1.1"
+pooled-arc = "0.1"
 
 # Common dependencies
 schemars = { workspace = true }

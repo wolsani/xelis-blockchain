@@ -17,11 +17,11 @@ impl VersionedDagOrderProvider for MemoryStorage {
 
     async fn delete_dag_order_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         let keys: Vec<_> = self.hash_at_topo.range((topoheight + 1)..)
-            .map(|(k, v)| (*k, v.clone()))
+            .map(|(&t, h)| (t, h.clone()))
             .collect();
-        for (topo, hash) in keys {
-            self.hash_at_topo.remove(&topo);
-            self.topo_by_hash.remove(&hash);
+        for (t, h) in keys {
+            self.hash_at_topo.remove(&t);
+            self.topo_by_hash.remove(&h);
         }
         Ok(())
     }
