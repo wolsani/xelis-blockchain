@@ -225,16 +225,17 @@ impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
 impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
     fn drop(&mut self) {
         {
-            let guard = self.inner.take().expect("drop");
-            drop(guard);
+            if let Some(guard) = self.inner.take() {
+                drop(guard);
+            }
         }
 
-        let (active_location, lifetime) = self.active_location.lock()
+        if let Some((active_location, lifetime)) = self.active_location.lock()
             .expect("active write location")
             .take()
-            .expect("active write location should be set");
-
-        debug!("Dropping {} RwLockWriteGuard at {} after {:?}", self.init_location, active_location, lifetime.elapsed());
+        {
+            debug!("Dropping {} RwLockWriteGuard at {} after {:?}", self.init_location, active_location, lifetime.elapsed());
+        }
     }
 }
 
