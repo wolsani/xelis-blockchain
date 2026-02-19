@@ -16,8 +16,16 @@ impl VersionedContractProvider for MemoryStorage {
                     data_map.split_off(&topoheight);
                     !data_map.is_empty()
                 });
-                entry.balances.iter_mut().for_each(|(_, balance_map)| {
+                entry.balances.retain(|_, balance_map| {
                     balance_map.split_off(&topoheight);
+                    !balance_map.is_empty()
+                });
+                entry.events_callbacks.retain(|_, event_map| {
+                    event_map.retain(|_, listeners_map| {
+                        listeners_map.split_off(&topoheight);
+                        !listeners_map.is_empty()
+                    });
+                    !event_map.is_empty()
                 });
             });
         Ok(())
@@ -32,8 +40,16 @@ impl VersionedContractProvider for MemoryStorage {
                     data_map.split_off(&topoheight);
                     !data_map.is_empty()
                 });
-                entry.balances.iter_mut().for_each(|(_, balance_map)| {
+                entry.balances.retain(|_, balance_map| {
                     balance_map.split_off(&topoheight);
+                    !balance_map.is_empty()
+                });
+                entry.events_callbacks.retain(|_, event_map| {
+                    event_map.retain(|_, listeners_map| {
+                        listeners_map.split_off(&topoheight);
+                        !listeners_map.is_empty()
+                    });
+                    !event_map.is_empty()
                 });
             });
         Ok(())
@@ -50,9 +66,21 @@ impl VersionedContractProvider for MemoryStorage {
 
                     !data_map.is_empty()
                 });
-                entry.balances.iter_mut().for_each(|(_, balance_map)| {
+                entry.balances.retain(|_, balance_map| {
                     let to_keep = balance_map.split_off(&topoheight);
                     *balance_map = to_keep;
+
+                    !balance_map.is_empty()
+                });
+
+                entry.events_callbacks.retain(|_, event_map| {
+                    event_map.retain(|_, listeners_map| {
+                        let to_keep = listeners_map.split_off(&topoheight);
+                        *listeners_map = to_keep;
+
+                        !listeners_map.is_empty()
+                    });
+                    !event_map.is_empty()
                 });
             });
 

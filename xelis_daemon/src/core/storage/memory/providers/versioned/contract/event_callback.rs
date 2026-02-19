@@ -8,18 +8,15 @@ use super::super::super::super::MemoryStorage;
 
 #[async_trait]
 impl VersionedContractEventCallbackProvider for MemoryStorage {
-    async fn delete_versioned_contract_event_callbacks_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.versioned_event_callbacks.retain(|&(t, _, _, _), _| t != topoheight);
+    async fn delete_versioned_contract_event_callbacks_at_topoheight(&mut self, _: TopoHeight) -> Result<(), BlockchainError> {
         Ok(())
     }
 
-    async fn delete_versioned_contract_event_callbacks_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.versioned_event_callbacks.retain(|&(t, _, _, _), _| t <= topoheight);
+    async fn delete_versioned_contract_event_callbacks_above_topoheight(&mut self, _: TopoHeight) -> Result<(), BlockchainError> {
         Ok(())
     }
 
-    async fn delete_versioned_contract_event_callbacks_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
-        self.versioned_event_callbacks.retain(|&(t, _, _, _), _| t >= topoheight);
+    async fn delete_versioned_contract_event_callbacks_below_topoheight(&mut self, _: TopoHeight, _: bool) -> Result<(), BlockchainError> {
         Ok(())
     }
 }

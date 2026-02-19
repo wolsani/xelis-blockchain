@@ -73,6 +73,9 @@ pub(crate) struct ContractEntry {
     balances: HashMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedContractBalance>>,
     // Scheduled executions registered at said topoheight
     scheduled_executions: BTreeMap<TopoHeight, BTreeMap<TopoHeight, ScheduledExecution>>,
+    // Event callbacks registered at said topoheight
+    // (event id, contract listener) -> registration topoheight
+    events_callbacks: BTreeMap<u64, BTreeMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedEventCallbackRegistration>>>,
 }
 
 // Block metadata
@@ -115,12 +118,8 @@ pub struct MemoryStorage {
     contract_logs: HashMap<PooledArc<Hash>, Vec<ContractLog>>,
 
     // All scheduled executions: execution_topoheight -> contracts -> registration topoheight
+    // This is used to quickly retrieve all scheduled executions to execute at a given topoheight
     scheduled_executions_per_topoheight: BTreeMap<TopoHeight, HashMap<PooledArc<Hash>, TopoHeight>>,
-
-    // Contract event callbacks: (contract, event_id, listener_contract) -> last topoheight
-    event_callback_pointers: HashMap<(PooledArc<Hash>, u64, PooledArc<Hash>), TopoHeight>,
-    // (topoheight, contract, event_id, listener_contract)
-    versioned_event_callbacks: HashMap<(TopoHeight, PooledArc<Hash>, u64, PooledArc<Hash>), VersionedEventCallbackRegistration>,
 }
 
 impl MemoryStorage {
@@ -140,8 +139,6 @@ impl MemoryStorage {
             contracts: HashMap::new(),
             contract_logs: HashMap::new(),
             scheduled_executions_per_topoheight: BTreeMap::new(),
-            event_callback_pointers: HashMap::new(),
-            versioned_event_callbacks: HashMap::new(),
         }
     }
 }
