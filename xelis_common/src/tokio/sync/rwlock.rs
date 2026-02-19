@@ -201,6 +201,8 @@ pub struct RwLockWriteGuard<'a, T: ?Sized> {
 }
 
 impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
+    /// Downgrades this write guard to a read guard, keeping the same location and updating the active guards accordingly.
+    #[allow(dead_code)]
     pub fn downgrade(mut guard: Self) -> RwLockReadGuard<'a, T> {
         let location = guard.init_location;
         debug!("Downgrading {} RwLockWriteGuard to read guard at {}", guard.init_location, location);
