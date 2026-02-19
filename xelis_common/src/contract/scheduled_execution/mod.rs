@@ -1,6 +1,6 @@
 mod kind;
 
-use std::{hash, sync::Arc};
+use std::{borrow::Borrow, hash, sync::Arc};
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -87,6 +87,12 @@ impl PartialEq for ScheduledExecution {
 }
 
 impl Eq for ScheduledExecution {}
+
+impl Borrow<Hash> for ScheduledExecution {
+    fn borrow(&self) -> &Hash {
+        &self.contract
+    }
+}
 
 impl Serializer for ScheduledExecution {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
