@@ -17,56 +17,82 @@ use super::super::super::MemoryStorage;
 impl ContractScheduledExecutionProvider for MemoryStorage {
     async fn set_contract_scheduled_execution_at_topoheight(&mut self, contract: &Hash, topoheight: TopoHeight, execution: &ScheduledExecution, execution_topoheight: TopoHeight) -> Result<(), BlockchainError> {
         let shared = PooledArc::from_ref(contract);
-        self.delayed_executions.insert((execution_topoheight, shared.clone()), execution.clone());
-        self.delayed_execution_registrations.insert((topoheight, shared, execution_topoheight));
+        self.contracts
+            .entry(shared.clone())
+            .or_default()
+            .scheduled_executions
+            .entry(execution_topoheight)
+            .or_default()
+            .insert(topoheight, execution.clone());
+
+        self.scheduled_executions_per_topoheight
+            .entry(execution_topoheight)
+            .or_default()
+            .insert(shared, topoheight);
+
         Ok(())
     }
 
     async fn has_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        Ok(self.delayed_executions.contains_key(&(topoheight, PooledArc::from_ref(contract))))
+        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
+            .map_or(false, |executions| executions.contains_key(contract))
+        )
     }
 
     async fn get_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<ScheduledExecution, BlockchainError> {
-        self.delayed_executions.get(&(topoheight, PooledArc::from_ref(contract)))
+        self.scheduled_executions_per_topoheight.get(&topoheight)
+            .and_then(|executions| executions.get(contract))
+            .and_then(|&exec_topo| self.contracts.get(contract)
+                .and_then(|contract_data| contract_data.scheduled_executions.get(&exec_topo))
+                .and_then(|executions_at_topo| executions_at_topo.get(&topoheight))
+            )
             .cloned()
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_contract_scheduled_executions_for_execution_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + Send + 'a, BlockchainError> {
-        let entries: Vec<_> = self.delayed_executions.iter()
-            .filter(move |(&(t, _), _)| t == topoheight)
-            .map(|(&(_, ref contract), _)| Ok(contract.as_ref().clone()))
-            .collect();
-        Ok(entries.into_iter())
+        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
+            .into_iter()
+            .flat_map(|executions| executions.keys())
+            .map(|contract| Ok(contract.as_ref().clone()))
+        )
     }
 
     async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
-        let entries: Vec<_> = self.delayed_execution_registrations.iter()
-            .filter(move |&(t, _, _)| *t == topoheight)
-            .map(|(_, contract, exec_topo)| Ok((*exec_topo, contract.as_ref().clone())))
-            .collect();
-        Ok(entries.into_iter())
+        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
+            .into_iter()
+            .flat_map(|executions| executions.iter())
+            .map(|(contract, reg_topo)| Ok((*reg_topo, contract.as_ref().clone())))
+        )
     }
 
     async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError> {
-        let entries: Vec<_> = self.delayed_executions.iter()
-            .filter(move |(&(t, _), _)| t == topoheight)
-            .map(|(_, exec)| Ok(exec.clone()))
-            .collect();
-        Ok(entries.into_iter())
+        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
+            .into_iter()
+            .flat_map(|executions| executions.iter())
+            .filter_map(move |(contract, reg_topo)| {
+                self.contracts.get(contract)
+                    .and_then(|contract_data| contract_data.scheduled_executions.get(reg_topo))
+                    .and_then(|executions_at_topo| executions_at_topo.get(&topoheight))
+                    .cloned()
+            })
+            .map(Ok)
+        )
     }
 
     async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight, min_execution_topoheight: Option<TopoHeight>) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
-        let entries: Vec<_> = self.delayed_execution_registrations.iter()
-            .filter(move |&(reg_topo, _, exec_topo)| {
-                *reg_topo >= minimum_topoheight && *reg_topo <= maximum_topoheight
-                    && !min_execution_topoheight.is_some_and(|min| *exec_topo < min)
-            })
-            .filter_map(move |(_, contract, exec_topo)| {
-                let exec = self.delayed_executions.get(&(*exec_topo, contract.clone()))?.clone();
-                Some(Ok((*exec_topo, *exec_topo, exec)))
-            })
-            .collect();
-        Ok(stream::iter(entries))
+        let iter = self.scheduled_executions_per_topoheight.range(minimum_topoheight..=maximum_topoheight)
+            .flat_map(move |(&exec_topo, executions)| executions.iter()
+                .filter(move |(_, &reg_topo)| min_execution_topoheight.map_or(true, |min_exec| reg_topo >= min_exec))
+                .filter_map(move |(contract, reg_topo)| {
+                    self.contracts.get(contract)
+                        .and_then(|contract_data| contract_data.scheduled_executions.get(reg_topo))
+                        .and_then(|executions_at_topo| executions_at_topo.get(&exec_topo))
+                        .cloned()
+                        .map(|execution| (*reg_topo, exec_topo, execution))
+                })
+            )
+            .map(Ok);
+        Ok(stream::iter(iter))
     }
 }

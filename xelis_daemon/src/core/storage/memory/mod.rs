@@ -1,6 +1,6 @@
 mod providers;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -71,6 +71,8 @@ pub(crate) struct ContractEntry {
     data: HashMap<ValueCell, BTreeMap<TopoHeight, VersionedContractData>>,
     transactions: IndexSet<PooledArc<Hash>>,
     balances: HashMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedContractBalance>>,
+    // Scheduled executions registered at said topoheight
+    scheduled_executions: BTreeMap<TopoHeight, BTreeMap<TopoHeight, ScheduledExecution>>,
 }
 
 // Block metadata
@@ -109,13 +111,11 @@ pub struct MemoryStorage {
     // Contracts: hash -> entry with pointers
     contracts: HashMap<PooledArc<Hash>, ContractEntry>,
 
-    // Contract logs
+    // Contract logs per caller (TX or Scheduled Execution hash): contract -> logs
     contract_logs: HashMap<PooledArc<Hash>, Vec<ContractLog>>,
 
-    // Contract scheduled executions: (execution_topoheight, contract)
-    delayed_executions: HashMap<(TopoHeight, PooledArc<Hash>), ScheduledExecution>,
-    // (registration_topoheight, contract, execution_topoheight)
-    delayed_execution_registrations: HashSet<(TopoHeight, PooledArc<Hash>, TopoHeight)>,
+    // All scheduled executions: execution_topoheight -> contracts -> registration topoheight
+    scheduled_executions_per_topoheight: BTreeMap<TopoHeight, HashMap<PooledArc<Hash>, TopoHeight>>,
 
     // Contract event callbacks: (contract, event_id, listener_contract) -> last topoheight
     event_callback_pointers: HashMap<(PooledArc<Hash>, u64, PooledArc<Hash>), TopoHeight>,
@@ -139,8 +139,7 @@ impl MemoryStorage {
             accounts: HashMap::new(),
             contracts: HashMap::new(),
             contract_logs: HashMap::new(),
-            delayed_executions: HashMap::new(),
-            delayed_execution_registrations: HashSet::new(),
+            scheduled_executions_per_topoheight: BTreeMap::new(),
             event_callback_pointers: HashMap::new(),
             versioned_event_callbacks: HashMap::new(),
         }

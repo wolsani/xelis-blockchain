@@ -9,20 +9,69 @@ use super::super::super::super::MemoryStorage;
 #[async_trait]
 impl VersionedScheduledExecutionsProvider for MemoryStorage {
     async fn delete_scheduled_executions_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.delayed_executions.retain(|&(t, _), _| t != topoheight);
-        self.delayed_execution_registrations.retain(|&(t, _, _)| t != topoheight);
+        self.contracts.iter_mut()
+            .for_each(|(contract, contract_data)| {
+                contract_data.scheduled_executions.split_off(&topoheight)
+                .keys()
+                .for_each(|&exec_topo| {
+                    let is_empty = self.scheduled_executions_per_topoheight.get_mut(&exec_topo)
+                        .map_or(false, |executions| {
+                            executions.remove(contract);
+                            executions.is_empty()
+                        });
+
+                    if is_empty {
+                        self.scheduled_executions_per_topoheight.remove(&exec_topo);
+                    }
+                });
+            });
         Ok(())
     }
 
     async fn delete_scheduled_executions_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.delayed_executions.retain(|&(t, _), _| t <= topoheight);
-        self.delayed_execution_registrations.retain(|&(t, _, _)| t <= topoheight);
+        let topoheight = topoheight + 1;
+        self.contracts.iter_mut()
+            .for_each(|(contract, contract_data)| {
+                contract_data.scheduled_executions.split_off(&topoheight)
+                .keys()
+                .for_each(|&exec_topo| {
+                    let is_empty = self.scheduled_executions_per_topoheight.get_mut(&exec_topo)
+                        .map_or(false, |executions| {
+                            executions.remove(contract);
+                            executions.is_empty()
+                        });
+
+                    if is_empty {
+                        self.scheduled_executions_per_topoheight.remove(&exec_topo);
+                    }
+                });
+            });
+
         Ok(())
     }
 
     async fn delete_scheduled_executions_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.delayed_executions.retain(|&(t, _), _| t >= topoheight);
-        self.delayed_execution_registrations.retain(|&(t, _, _)| t >= topoheight);
+        self.contracts.iter_mut()
+            .for_each(|(contract, contract_data)| {
+                let to_keep = contract_data.scheduled_executions.split_off(&topoheight);
+
+                // Delete only the planned scheduled executions that were executed below the topoheight
+                // and remove the corresponding entries in scheduled_executions_per_topoheight.
+                contract_data.scheduled_executions.keys()
+                    .for_each(|&exec_topo| {
+                        let is_empty = self.scheduled_executions_per_topoheight.get_mut(&exec_topo)
+                            .map_or(false, |executions| {
+                                executions.remove(contract);
+                                executions.is_empty()
+                            });
+
+                        if is_empty {
+                            self.scheduled_executions_per_topoheight.remove(&exec_topo);
+                        }
+                    });
+                    
+                contract_data.scheduled_executions = to_keep;
+            });
         Ok(())
     }
 }
