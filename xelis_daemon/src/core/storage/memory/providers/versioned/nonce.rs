@@ -9,17 +9,29 @@ use super::super::super::MemoryStorage;
 #[async_trait]
 impl VersionedNonceProvider for MemoryStorage {
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.versioned_nonces.retain(|&(_, t), _| t != topoheight);
+        self.accounts.values_mut()
+            .for_each(|acc| {
+                acc.nonces.split_off(&topoheight);
+            });
         Ok(())
     }
 
     async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.versioned_nonces.retain(|&(_, t), _| t <= topoheight);
+        self.accounts.values_mut()
+            .for_each(|acc| {
+                acc.nonces.split_off(&(topoheight + 1));
+            });
         Ok(())
     }
 
     async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
-        self.versioned_nonces.retain(|&(_, t), _| t >= topoheight);
+        let iter = self.accounts.values_mut()
+            .map(|acc| (acc.nonces.split_off(&topoheight), &mut acc.nonces));
+
+        for (to_keep, versions) in iter {
+            *versions = to_keep;
+        }
+
         Ok(())
     }
 }

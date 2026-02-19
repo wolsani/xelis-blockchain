@@ -24,23 +24,20 @@ impl AccountProvider for MemoryStorage {
 
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         let shared = PooledArc::from_ref(key);
-        let account = self.get_or_create_account(key);
-        account.registered_at = Some(topoheight);
-        self.prefixed_registrations.insert((topoheight, shared));
+        self.accounts.entry(shared)
+            .or_default()
+            .registered_at = Some(topoheight);
+
         Ok(())
     }
 
     async fn delete_account_for(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
-        if let Some(account) = self.accounts.get_mut(key) {
-            account.registered_at = None;
-            account.nonce_pointer = None;
-            account.multisig_pointer = None;
-        }
+        self.accounts.remove(key);
         Ok(())
     }
 
     async fn is_account_registered(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
-        Ok(self.accounts.contains_key(key))
+        Ok(self.accounts.get(key).and_then(|a| a.registered_at).is_some())
     }
 
     async fn is_account_registered_for_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
@@ -67,37 +64,17 @@ impl AccountProvider for MemoryStorage {
     }
 
     async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let Some(account) = self.accounts.get(key) else {
-            return Ok(false);
-        };
-
-        // Check nonce pointer
-        if let Some(nonce_pointer) = account.nonce_pointer {
-            if nonce_pointer >= minimum_topoheight && nonce_pointer <= maximum_topoheight {
-                return Ok(true);
-            }
-        }
-
-        let shared_key = PooledArc::from_ref(key);
         // Check balance pointers for this account
-        if let Some(balances) = self.balance_pointers.get(&shared_key) {
-            for (asset, &pointer_topo) in balances {
-                let mut topo = Some(pointer_topo);
-                while let Some(t) = topo {
-                    if t < minimum_topoheight {
-                        break;
-                    }
+        let updated = self.accounts
+                .get(key)
+                .map_or(false, |acc|
+                    acc.nonces.range(minimum_topoheight..=maximum_topoheight).next().is_some() ||  acc.balances.values()
+                        .map(|versions| versions.range(minimum_topoheight..=maximum_topoheight))
+                        .flatten()
+                        .next()
+                        .is_some()
+                );
 
-                    if t <= maximum_topoheight {
-                        return Ok(true);
-                    }
-
-                    topo = self.versioned_balances.get(&(t, shared_key.clone(), asset.clone()))
-                        .and_then(|b| b.get_previous_topoheight());
-                }
-            }
-        }
-
-        Ok(false)
+        Ok(updated)
     }
 }

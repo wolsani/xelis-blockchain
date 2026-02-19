@@ -16,12 +16,13 @@ use xelis_common::{
     immutable::Immutable,
     network::Network,
     serializer::Serializer,
-    transaction::{MultiSigPayload, Transaction},
+    transaction::Transaction,
     varuint::VarUint,
     versioned_type::Versioned,
 };
 use xelis_vm::ValueCell;
 
+use crate::core::storage::VersionedMultiSig;
 use crate::core::{
     error::BlockchainError,
     storage::{
@@ -40,12 +41,12 @@ use crate::core::{
     },
 };
 
-// Internal account structure
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct AccountEntry {
-    registered_at: Option<TopoHeight>,
-    nonce_pointer: Option<TopoHeight>,
-    multisig_pointer: Option<TopoHeight>,
+    pub balances: HashMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedBalance>>,
+    pub nonces: BTreeMap<TopoHeight, VersionedNonce>,
+    pub multisig: BTreeMap<TopoHeight, VersionedMultiSig<'static>>,
+    pub registered_at: Option<TopoHeight>,
 }
 
 // Internal asset structure
@@ -83,6 +84,8 @@ pub struct MemoryStorage {
     // Tips
     tips: Tips,
 
+    accounts: HashMap<PooledArc<PublicKey>, AccountEntry>,
+
     // Block data
     blocks: HashMap<PooledArc<Hash>, Arc<BlockHeader>>,
     block_metadata: HashMap<PooledArc<Hash>, BlockMetadata>,
@@ -108,12 +111,6 @@ pub struct MemoryStorage {
     block_execution_order: HashMap<PooledArc<Hash>, u64>,
     blocks_execution_count: u64,
 
-    // Accounts: key -> entry with pointers
-    accounts: HashMap<PooledArc<PublicKey>, AccountEntry>,
-
-    // Versioned nonces: (account, topoheight) -> VersionedNonce
-    versioned_nonces: HashMap<(PooledArc<PublicKey>, TopoHeight), VersionedNonce>,
-
     // Assets: hash -> entry with pointers
     assets: HashMap<PooledArc<Hash>, AssetEntry>,
 
@@ -122,17 +119,6 @@ pub struct MemoryStorage {
 
     // Versioned asset supply: (topoheight, asset) -> VersionedSupply
     versioned_assets_supply: HashMap<(TopoHeight, PooledArc<Hash>), VersionedSupply>,
-
-    // Balances: (account, asset) -> last topoheight
-    balance_pointers: HashMap<PooledArc<PublicKey>, HashMap<PooledArc<Hash>, TopoHeight>>,
-    // (topoheight, account, asset) -> VersionedBalance
-    versioned_balances: HashMap<(TopoHeight, PooledArc<PublicKey>, PooledArc<Hash>), VersionedBalance>,
-
-    // Prefixed registrations: (topoheight, account)
-    prefixed_registrations: HashSet<(TopoHeight, PooledArc<PublicKey>)>,
-
-    // Multisig: (topoheight, account)
-    versioned_multisig: HashMap<(TopoHeight, PooledArc<PublicKey>), Versioned<Option<MultiSigPayload>>>,
 
     // Contracts: hash -> entry with pointers
     contracts: HashMap<PooledArc<Hash>, ContractEntry>,
@@ -192,15 +178,10 @@ impl MemoryStorage {
             tx_in_blocks: HashMap::new(),
             block_execution_order: HashMap::new(),
             blocks_execution_count: 0,
-            accounts: HashMap::new(),
-            versioned_nonces: HashMap::new(),
             assets: HashMap::new(),
             versioned_assets: HashMap::new(),
             versioned_assets_supply: HashMap::new(),
-            balance_pointers: HashMap::new(),
-            versioned_balances: HashMap::new(),
-            prefixed_registrations: HashSet::new(),
-            versioned_multisig: HashMap::new(),
+            accounts: HashMap::new(),
             contracts: HashMap::new(),
             versioned_contracts: HashMap::new(),
             contract_data_pointers: HashMap::new(),
@@ -215,15 +196,6 @@ impl MemoryStorage {
             versioned_event_callbacks: HashMap::new(),
             contract_transactions: BTreeSet::new(),
         }
-    }
-
-    fn get_or_create_account(&mut self, key: &PublicKey) -> &mut AccountEntry {
-        let shared_key = PooledArc::from_ref(key);
-        self.accounts.entry(shared_key).or_insert_with(|| AccountEntry {
-            registered_at: None,
-            nonce_pointer: None,
-            multisig_pointer: None,
-        })
     }
 
     fn get_or_create_contract(&mut self, hash: &Hash) -> &mut ContractEntry {

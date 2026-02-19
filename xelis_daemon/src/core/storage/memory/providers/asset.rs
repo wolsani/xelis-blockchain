@@ -88,10 +88,10 @@ impl AssetProvider for MemoryStorage {
     }
 
     async fn get_assets_for<'a>(&'a self, key: &'a PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        Ok(self.balance_pointers.get(&PooledArc::from_ref(key))
+        Ok(self.accounts.get(&PooledArc::from_ref(key))
             .into_iter()
-            .flat_map(|m| m.keys())
-            .map(move |asset| Ok(asset.as_ref().clone()))
+            .flat_map(|acc| acc.balances.keys())
+            .map(|asset| Ok(asset.as_ref().clone()))
         )
     }
 

@@ -14,57 +14,37 @@ use super::super::MemoryStorage;
 #[async_trait]
 impl BalanceProvider for MemoryStorage {
     async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError> {
-        if !self.accounts.contains_key(key) {
-            return Ok(false)
-        }
-
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        Ok(self.balance_pointers.get(&shared_key).and_then(|m| m.get(&shared_asset)).is_some())
+        Ok(self.accounts.get(key).and_then(|acc| acc.balances.get(asset)).is_some())
     }
 
     async fn has_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        Ok(self.versioned_balances.contains_key(&(topoheight, shared_key, shared_asset)))
+        Ok(
+            self.accounts.get(key)
+                .and_then(|acc| acc.balances.get(asset))
+                .map_or(false, |versions| versions.contains_key(&topoheight))
+        )
     }
 
     async fn get_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedBalance, BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        self.versioned_balances.get(&(topoheight, shared_key, shared_asset))
+        self.accounts.get(key)
+            .and_then(|acc| acc.balances.get(asset))
+            .and_then(|versions| versions.get(&topoheight))
             .cloned()
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        let mut topo = if self.versioned_balances.contains_key(&(maximum_topoheight, shared_key.clone(), shared_asset.clone())) {
-            Some(maximum_topoheight)
-        } else {
-            self.balance_pointers.get(&shared_key).and_then(|m| m.get(&shared_asset)).copied()
-        };
+        let version = self.accounts.get(key)
+            .and_then(|acc| acc.balances.get(asset))
+            .and_then(|versions| versions.range(..=maximum_topoheight).next_back());
 
-        while let Some(t) = topo {
-            if t <= maximum_topoheight {
-                if let Some(balance) = self.versioned_balances.get(&(t, shared_key.clone(), shared_asset.clone())) {
-                    return Ok(Some((t, balance.clone())));
-                }
-            }
-            topo = self.versioned_balances.get(&(t, shared_key.clone(), shared_asset.clone()))
-                .and_then(|b| b.get_previous_topoheight());
-        }
-
-        Ok(None)
+        Ok(version.map(|(&topo, balance)| (topo, balance.clone())))
     }
 
     async fn get_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<TopoHeight, BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        self.balance_pointers.get(&shared_key)
-            .and_then(|m| m.get(&shared_asset))
-            .copied()
+        self.accounts.get(key)
+            .and_then(|acc| acc.balances.get(asset))
+            .and_then(|versions| versions.keys().last().cloned())
             .ok_or(BlockchainError::Unknown)
     }
 
@@ -83,74 +63,44 @@ impl BalanceProvider for MemoryStorage {
     }
 
     async fn get_output_balance_in_range(&self, key: &PublicKey, asset: &Hash, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
-        if !self.accounts.contains_key(key) {
-            return Ok(None)
-        }
+        let version = self.accounts.get(key)
+            .and_then(|acc| acc.balances.get(asset))
+            .and_then(|versions| versions.range(minimum_topoheight..=maximum_topoheight)
+                .filter(|(_, balance)| balance.contains_output())
+                .next_back()
+            );
 
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        let Some(&pointer) = self.balance_pointers.get(&shared_key).and_then(|m| m.get(&shared_asset)) else {
-            return Ok(None);
-        };
-
-        let start = if pointer > maximum_topoheight
-            && self.versioned_balances.contains_key(&(maximum_topoheight, shared_key.clone(), shared_asset.clone()))
-        {
-            maximum_topoheight
-        } else {
-            pointer
-        };
-
-        let mut topo = Some(start);
-        while let Some(t) = topo {
-            if t < minimum_topoheight {
-                break;
-            }
-            if let Some(balance) = self.versioned_balances.get(&(t, shared_key.clone(), shared_asset.clone())) {
-                if t <= maximum_topoheight && balance.contains_output() {
-                    return Ok(Some((t, balance.clone())));
-                }
-                topo = balance.get_previous_topoheight();
-            } else {
-                break;
-            }
-        }
-
-        Ok(None)
+        Ok(version.map(|(&topo, balance)| (topo, balance.clone())))
     }
 
     async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(TopoHeight, VersionedBalance), BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        let topoheight = self.balance_pointers.get(&shared_key)
-            .and_then(|m| m.get(&shared_asset))
-            .copied()
-            .ok_or(BlockchainError::Unknown)?;
-        let balance = self.versioned_balances.get(&(topoheight, shared_key, shared_asset))
-            .cloned()
-            .ok_or(BlockchainError::Unknown)?;
-        Ok((topoheight, balance))
+        let version = self.accounts.get(key)
+            .and_then(|acc| acc.balances.get(asset))
+            .and_then(|versions| versions.last_key_value());
+
+        version.map(|(&topo, balance)| (topo, balance.clone()))
+            .ok_or(BlockchainError::Unknown)
     }
 
-    fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        self.balance_pointers.entry(shared_key).or_default().insert(shared_asset, topoheight);
+    fn set_last_topoheight_for_balance(&mut self, _: &PublicKey, _: &Hash, _: TopoHeight) -> Result<(), BlockchainError> {
         Ok(())
     }
 
     async fn set_last_balance_to(&mut self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight, version: &VersionedBalance) -> Result<(), BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
-        self.balance_pointers.entry(shared_key.clone()).or_default().insert(shared_asset.clone(), topoheight);
-        self.versioned_balances.insert((topoheight, shared_key, shared_asset), version.clone());
-        Ok(())
+        self.set_balance_at_topoheight(asset, topoheight, key, version).await
     }
 
     async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: TopoHeight, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError> {
         let shared_key = PooledArc::from_ref(key);
         let shared_asset = PooledArc::from_ref(asset);
-        self.versioned_balances.insert((topoheight, shared_key, shared_asset), balance.clone());
+
+        self.accounts.entry(shared_key)
+            .or_default()
+            .balances
+            .entry(shared_asset)
+            .or_default()
+            .insert(topoheight, balance.clone());
+
         Ok(())
     }
 
@@ -165,23 +115,13 @@ impl BalanceProvider for MemoryStorage {
                 stable_topoheight: topo,
             };
 
-            if version.contains_output() || version.get_previous_topoheight().is_none() {
+            if version.contains_output() {
                 return Ok(Some(account));
             }
 
-            let mut previous = version.get_previous_topoheight();
-            let shared_key = PooledArc::from_ref(key);
-            let shared_asset = PooledArc::from_ref(asset);
-            while let Some(prev_topo) = previous {
-                if let Some(balance) = self.versioned_balances.get(&(prev_topo, shared_key.clone(), shared_asset.clone())) {
-                    if balance.contains_output() {
-                        account.output_topoheight = Some(prev_topo);
-                        break;
-                    }
-                    previous = balance.get_previous_topoheight();
-                } else {
-                    break;
-                }
+            if let Some(previous) = version.get_previous_topoheight() {
+                account.output_topoheight = self.get_output_balance_in_range(key, asset, min_topoheight, previous).await?
+                    .map(|(t, _)| t);
             }
 
             return Ok(Some(account));
@@ -190,27 +130,25 @@ impl BalanceProvider for MemoryStorage {
         Ok(None)
     }
 
-    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight, maximum: usize) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError> {
-        let shared_key = PooledArc::from_ref(key);
-        let shared_asset = PooledArc::from_ref(asset);
+    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight, maximum: usize) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError> {
         let mut balances = Vec::new();
-        let mut next_topo = self.balance_pointers.get(&shared_key).and_then(|m| m.get(&shared_asset)).copied();
 
-        while let Some(topo) = next_topo.take().filter(|&t| t >= min_topoheight && balances.len() < maximum) {
-            if topo > max_topoheight {
-                if let Some(version) = self.versioned_balances.get(&(topo, shared_key.clone(), shared_asset.clone())) {
-                    next_topo = version.get_previous_topoheight();
-                }
-                continue;
-            }
-            if let Some(version) = self.versioned_balances.get(&(topo, shared_key.clone(), shared_asset.clone())) {
-                let has_output = version.contains_output();
-                let previous = version.get_previous_topoheight();
-                balances.push(version.clone().as_balance(topo));
-                if has_output {
-                    break;
-                }
-                next_topo = previous;
+        let mut iter = self.accounts.get(key)
+            .and_then(|acc| acc.balances.get(asset))
+            .map(|versions| versions.range(minimum_topoheight..=maximum_topoheight))
+            .ok_or(BlockchainError::Unknown)?;
+
+        let mut next_topo = None;
+        while let Some((&topo, version)) = iter.next_back().filter(|_| balances.len() < maximum) {
+            let version = version.clone();
+            let has_output = version.contains_output();
+
+            next_topo = version.get_previous_topoheight();
+            balances.push(version.as_balance(topo));
+
+            if has_output {
+                next_topo = None;
+                break;
             }
         }
 
