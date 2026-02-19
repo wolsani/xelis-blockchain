@@ -224,7 +224,7 @@ impl RocksStorage {
         };
 
         if let Some(pruned_topoheight) = db.load_optional_from_disk(Column::Common, PRUNED_TOPOHEIGHT)?{
-            db.cache.pruned_topoheight = Some(pruned_topoheight);
+            db.cache.chain.pruned_topoheight = Some(pruned_topoheight);
         }
 
         Ok(db)

@@ -315,7 +315,7 @@ impl SledStorage {
             error!("Error while migrating database: {}", e);
         }
 
-        storage.load_cache_from_disk();
+        storage.load_cache_from_disk()?;
 
         Ok(storage)
     }
@@ -335,54 +335,56 @@ impl SledStorage {
     }
 
     // Load all the needed cache and counters in memory from disk 
-    pub fn load_cache_from_disk(&mut self) {
+    pub fn load_cache_from_disk(&mut self) -> Result<(), BlockchainError> {
         // Load tips from disk if available
-        if let Ok(tips) = self.load_from_disk::<Tips>(&self.extra, TIPS, DiskContext::Tips) {
+        if let Some(tips) = self.load_optional_from_disk::<Tips>(&self.extra, TIPS)? {
             debug!("Found tips: {}", tips.len());
             self.cache.chain.tips = tips;
         }
 
         // Load the pruned topoheight from disk if available
-        if let Ok(pruned_topoheight) = self.load_from_disk::<u64>(&self.extra, PRUNED_TOPOHEIGHT, DiskContext::PrunedTopoHeight) {
+        if let Some(pruned_topoheight) = self.load_optional_from_disk::<u64>(&self.extra, PRUNED_TOPOHEIGHT)? {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
-            self.cache.pruned_topoheight = Some(pruned_topoheight);
+            self.cache.chain.pruned_topoheight = Some(pruned_topoheight);
         }
 
         // Load the assets count from disk if available
-        if let Ok(assets_count) = self.load_from_disk::<u64>(&self.extra, ASSETS_COUNT, DiskContext::AssetsCount) {
+        if let Some(assets_count) = self.load_optional_from_disk::<u64>(&self.extra, ASSETS_COUNT)? {
             debug!("Found assets count: {}", assets_count);
             self.cache.assets_count = assets_count;
         }
 
         // Load the txs count from disk if available
-        if let Ok(txs_count) = self.load_from_disk::<u64>(&self.extra, TXS_COUNT, DiskContext::TxsCount) {
+        if let Some(txs_count) = self.load_optional_from_disk::<u64>(&self.extra, TXS_COUNT)? {
             debug!("Found txs count: {}", txs_count);
             self.cache.transactions_count = txs_count;
         }
 
         // Load the blocks count from disk if available
-        if let Ok(blocks_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_COUNT, DiskContext::BlocksCount) {
+        if let Some(blocks_count) = self.load_optional_from_disk::<u64>(&self.extra, BLOCKS_COUNT)? {
             debug!("Found blocks count: {}", blocks_count);
             self.cache.blocks_count = blocks_count;
         }
 
         // Load the accounts count from disk if available
-        if let Ok(accounts_count) = self.load_from_disk::<u64>(&self.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
+        if let Some(accounts_count) = self.load_optional_from_disk::<u64>(&self.extra, ACCOUNTS_COUNT)? {
             debug!("Found accounts count: {}", accounts_count);
             self.cache.accounts_count = accounts_count;
         }
 
         // Load the blocks execution count from disk if available
-        if let Ok(blocks_execution_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
+        if let Some(blocks_execution_count) = self.load_optional_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT)? {
             debug!("Found blocks execution count: {}", blocks_execution_count);
             self.cache.blocks_execution_count = blocks_execution_count;
         }
 
         // Load the contracts count from disk if available
-        if let Ok(contracts_count) = self.load_from_disk::<u64>(&self.extra, CONTRACTS_COUNT, DiskContext::ContractsCount) {
+        if let Some(contracts_count) = self.load_optional_from_disk::<u64>(&self.extra, CONTRACTS_COUNT)? {
             debug!("Found contracts count: {}", contracts_count);
             self.cache.contracts_count = contracts_count;
         }
+
+        Ok(())
     }
 
     pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
