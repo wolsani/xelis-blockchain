@@ -168,7 +168,7 @@ impl RocksStorage {
                 return Ok(Some(topo))
             }
 
-            prev_topo = self.load_optional_from_disk(Column::ContractsData, &versioned_key[8..])?;
+            prev_topo = self.load_optional_from_disk(Column::VersionedContractsData, &versioned_key)?;
         }
 
         Ok(None)
