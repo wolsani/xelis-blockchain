@@ -1,3 +1,4 @@
+use itertools::Either;
 use pooled_arc::PooledArc;
 use std::borrow::Cow;
 use async_trait::async_trait;
@@ -33,114 +34,78 @@ use super::super::super::MemoryStorage;
 #[async_trait]
 impl ContractProvider for MemoryStorage {
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError> {
-        let entry = self.get_or_create_contract(hash);
-        entry.module_pointer = Some(topoheight);
-        let owned = Versioned::new(
-            contract.get().as_ref().map(|v| v.clone().into_owned()),
-            contract.get_previous_topoheight(),
-        );
-        self.versioned_contracts.insert((topoheight, PooledArc::from_ref(hash)), owned);
+        let shared = PooledArc::from_ref(hash);
+        self.contracts.entry(shared)
+            .or_default()
+            .modules
+            .insert(topoheight, Versioned::new(contract.get().as_ref().map(|v| Cow::Owned(v.as_ref().clone())), contract.get_previous_topoheight()));
+
         Ok(())
     }
 
     async fn get_last_topoheight_for_contract(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
-        Ok(self.contracts.get(hash).and_then(|c| c.module_pointer))
+        Ok(self.contracts.get(hash).and_then(|c| c.modules.last_key_value().map(|(t, _)| *t)))
     }
 
     async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContractModule<'a>, BlockchainError> {
-        let shared = PooledArc::from_ref(hash);
-        let stored = self.versioned_contracts.get(&(topoheight, shared))
-            .ok_or(BlockchainError::ContractNotFound(hash.clone()))?;
-        Ok(Versioned::new(
-            stored.get().as_ref().map(|v| Cow::Owned(v.clone())),
-            stored.get_previous_topoheight(),
-        ))
+        self.contracts.get(hash)
+            .and_then(|entry| entry.modules.get(&topoheight))
+            .cloned()
+            .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError> {
-        let Some(entry) = self.contracts.get(hash) else { return Ok(None); };
-        let Some(pointer) = entry.module_pointer else { return Ok(None); };
-        let shared = PooledArc::from_ref(hash);
-        let mut topo = Some(pointer);
-        while let Some(t) = topo {
-            if t <= maximum_topoheight {
-                if let Some(stored) = self.versioned_contracts.get(&(t, shared.clone())) {
-                    let module = Versioned::new(
-                        stored.get().as_ref().map(|v| Cow::Owned(v.clone())),
-                        stored.get_previous_topoheight(),
-                    );
-                    return Ok(Some((t, module)));
-                }
-            }
-            topo = self.versioned_contracts.get(&(t, shared.clone()))
-                .and_then(|m| m.get_previous_topoheight());
-        }
-        Ok(None)
+        Ok(self.contracts.get(hash)
+            .and_then(|entry| entry.modules.range(..=maximum_topoheight).next_back())
+            .map(|(t, m)| (*t, m.clone()))
+        )
     }
 
     async fn get_contracts<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         Ok(self.contracts.iter()
-            .filter(move |(_, entry)| {
-                if let Some(pointer) = entry.module_pointer {
-                    if minimum_topoheight.is_some_and(|min| pointer < min) {
-                        return false;
-                    }
-                    if maximum_topoheight.is_some_and(|max| pointer > max) {
-                        return false;
-                    }
-                    true
-                } else {
-                    false
-                }
+            .filter_map(move |(hash, entry)| {
+                match (minimum_topoheight, maximum_topoheight) {
+                    (Some(min), Some(max)) => Either::Left(entry.modules.range(min..=max)),
+                    (Some(min), None) => Either::Left(entry.modules.range(min..)),
+                    (None, Some(max)) => Either::Left(entry.modules.range(..=max)),
+                    (None, None) => Either::Right(entry.modules.iter()),
+                }.next_back().map(|_| Ok(hash.as_ref().clone()))
             })
-            .map(|(hash, _)| Ok(hash.as_ref().clone()))
         )
     }
 
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
-        if let Some(entry) = self.contracts.get_mut(hash) {
-            entry.module_pointer = None;
-        }
+        self.contracts.get_mut(hash)
+            .ok_or(BlockchainError::Unknown)?
+            .modules
+            .pop_last();
+
         Ok(())
     }
 
     async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        let Some(entry) = self.contracts.get(hash) else { return Ok(false); };
-        let Some(pointer) = entry.module_pointer else { return Ok(false); };
-        let shared = PooledArc::from_ref(hash);
-        Ok(self.versioned_contracts.get(&(pointer, shared))
-            .map_or(false, |v| v.get().is_some()))
+        Ok(self.contracts.contains_key(hash))
     }
 
     async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.contracts.get(hash).map_or(false, |c| c.module_pointer.is_some()))
+        Ok(self.contracts.get(hash).and_then(|c| c.modules.last_key_value()).is_some())
     }
 
     async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let shared = PooledArc::from_ref(hash);
-        Ok(self.versioned_contracts.get(&(topoheight, shared))
-            .map_or(false, |v| v.get().is_some()))
+        Ok(self.contracts.get(hash)
+            .and_then(|entry| entry.modules.get(&topoheight))
+            .map_or(false, |m| m.get().is_some()))
     }
 
     async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let shared = PooledArc::from_ref(hash);
-        Ok(self.versioned_contracts.contains_key(&(topoheight, shared)))
+        Ok(self.contracts.get(hash)
+            .map_or(false, |entry| entry.modules.contains_key(&topoheight)))
     }
 
     async fn has_contract_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let Some(entry) = self.contracts.get(hash) else { return Ok(false); };
-        let Some(pointer) = entry.module_pointer else { return Ok(false); };
-        let shared = PooledArc::from_ref(hash);
-        let mut t = Some(pointer);
-        while let Some(current) = t {
-            if current <= topoheight {
-                return Ok(self.versioned_contracts.get(&(current, shared.clone()))
-                    .map_or(false, |v| v.get().is_some()));
-            }
-            t = self.versioned_contracts.get(&(current, shared.clone()))
-                .and_then(|m| m.get_previous_topoheight());
-        }
-        Ok(false)
+        Ok(self.contracts.get(hash)
+            .and_then(|entry| entry.modules.range(..=topoheight).next_back())
+            .map_or(false, |(_, m)| m.get().is_some()))
     }
 
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
@@ -148,14 +113,18 @@ impl ContractProvider for MemoryStorage {
     }
 
     async fn add_tx_for_contract(&mut self, contract: &Hash, tx: &Hash) -> Result<(), BlockchainError> {
-        self.contract_transactions.insert((PooledArc::from_ref(contract), PooledArc::from_ref(tx)));
-        Ok(())
+        self.contracts.get_mut(contract)
+            .map(|entry| {
+                entry.transactions.insert(PooledArc::from_ref(tx));
+            })
+            .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        let shared = PooledArc::from_ref(contract);
-        Ok(self.contract_transactions.range((shared.clone(), PooledArc::from_ref(&Hash::zero()))..=(shared, PooledArc::from_ref(&Hash::max())))
-            .map(|(_, hash)| Ok(hash.as_ref().clone()))
+        Ok(self.contracts.get(contract)
+            .map(|entry| entry.transactions.iter().map(|tx| Ok(tx.as_ref().clone())))
+            .into_iter()
+            .flatten()
         )
     }
 }

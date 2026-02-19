@@ -17,86 +17,74 @@ use super::super::super::MemoryStorage;
 #[async_trait]
 impl ContractDataProvider for MemoryStorage {
     async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight, version: &VersionedContractData) -> Result<(), BlockchainError> {
-        let data_key = self.register_data_key(key);
         let shared = PooledArc::from_ref(contract);
-        self.versioned_contract_data.insert((topoheight, shared.clone(), data_key.clone()), version.clone());
-        self.contract_data_pointers.insert((shared, data_key), topoheight);
+        self.contracts.entry(shared)
+            .or_default()
+            .data
+            .entry(key.clone())
+            .or_default()
+            .insert(topoheight, version.clone());
+
         Ok(())
     }
 
     async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &ValueCell) -> Result<Option<TopoHeight>, BlockchainError> {
-        let data_key = Self::get_contract_data_key_bytes(key);
-        Ok(self.contract_data_pointers.get(&(PooledArc::from_ref(contract), data_key)).copied())
+        Ok(self.contracts.get(contract)
+            .and_then(|entry| entry.data.get(key))
+            .and_then(|data_map| data_map.keys().max().copied())
+        )
     }
 
     async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
-        let data_key = Self::get_contract_data_key_bytes(key);
-        self.versioned_contract_data.get(&(topoheight, PooledArc::from_ref(contract), data_key))
+        self.contracts.get(contract)
+            .and_then(|entry| entry.data.get(key))
+            .and_then(|data_map| data_map.get(&topoheight))
             .cloned()
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
-        let data_key = Self::get_contract_data_key_bytes(key);
-        let shared = PooledArc::from_ref(contract);
-        let mut topo = self.contract_data_pointers.get(&(shared.clone(), data_key.clone())).copied();
-        while let Some(t) = topo {
-            if t <= maximum_topoheight {
-                if let Some(data) = self.versioned_contract_data.get(&(t, shared.clone(), data_key.clone())) {
-                    return Ok(Some((t, data.clone())));
-                }
-            }
-            topo = self.versioned_contract_data.get(&(t, shared.clone(), data_key.clone()))
-                .and_then(|d| d.get_previous_topoheight());
-        }
-        Ok(None)
+        Ok(self.contracts.get(contract)
+            .and_then(|entry| entry.data.get(key))
+            .and_then(|data| data.range(..=maximum_topoheight).next_back())
+            .map(|(t, d)| (*t, d.clone()))
+        )
     }
 
     async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
-        let data_key = Self::get_contract_data_key_bytes(key);
-        let shared = PooledArc::from_ref(contract);
-        let mut topo = self.contract_data_pointers.get(&(shared.clone(), data_key.clone())).copied();
-        while let Some(t) = topo {
-            if t <= maximum_topoheight {
-                return Ok(Some(t));
-            }
-            topo = self.versioned_contract_data.get(&(t, shared.clone(), data_key.clone()))
-                .and_then(|d| d.get_previous_topoheight());
-        }
-        Ok(None)
+        Ok(self.contracts.get(contract)
+            .and_then(|entry| entry.data.get(key))
+            .and_then(|data| data.range(..=maximum_topoheight).next_back())
+            .map(|(t, _)| *t)
+        )
     }
 
     async fn has_contract_data_at_maximum_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let data_key = Self::get_contract_data_key_bytes(key);
-        let shared = PooledArc::from_ref(contract);
-        let Some(topo) = self.get_contract_data_topo_internal(contract, &data_key, topoheight) else {
-            return Ok(false);
-        };
-        Ok(self.versioned_contract_data.get(&(topo, shared, data_key))
-            .map_or(false, |d| d.get().is_some()))
+        self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, key, topoheight).await
+            .map(|opt| opt.is_some())
     }
 
     async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        let data_key = Self::get_contract_data_key_bytes(key);
-        Ok(self.versioned_contract_data.contains_key(&(topoheight, PooledArc::from_ref(contract), data_key)))
+        Ok(self.contracts.get(contract)
+            .and_then(|entry| entry.data.get(key))
+            .map_or(false, |data_map| data_map.contains_key(&topoheight))
+        )
     }
 
     async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
-        let shared = PooledArc::from_ref(contract);
-        let data_keys: Vec<Vec<u8>> = self.contract_data_pointers.keys()
-            .filter(|(c, _)| c.as_ref() == contract)
-            .map(|(_, dk)| dk.clone())
-            .collect();
+        let entries = self.contracts.get(contract)
+            .ok_or(BlockchainError::Unknown)?
+            .data
+            .iter()
+            .filter_map(move |(key, data_map)| data_map.range(..=topoheight)
+                .next_back()
+                .and_then(|(_, data)| data.get()
+                    .as_ref()
+                    .map(|value| (key.clone(), value.clone()))
+                )
+            )
+            .map(Ok);
 
-        let iter = data_keys.into_iter()
-            .filter_map(move |data_key| {
-                let topo = self.get_contract_data_topo_internal(contract, &data_key, topoheight)?;
-                let data = self.versioned_contract_data.get(&(topo, shared.clone(), data_key.clone()))?;
-                let value = data.get().as_ref()?.clone();
-                let key = self.contract_data_keys.get(&data_key)?.clone();
-                Some(Ok((key, value)))
-            });
-
-        Ok(stream::iter(iter))
+        Ok(stream::iter(entries))
     }
 }

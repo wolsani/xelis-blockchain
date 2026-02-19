@@ -63,8 +63,8 @@ impl TransactionProvider for MemoryStorage {
         let entry = self.transactions.remove(hash)
             .ok_or(BlockchainError::Unknown)?;
 
-        if let Some(contract) = entry.transaction.invoked_contract() {
-            self.contract_transactions.remove(&(PooledArc::from_ref(contract), PooledArc::from_ref(hash)));
+        if let Some(contract) = entry.transaction.invoked_contract().and_then(|contract| self.contracts.get_mut(contract)) {
+            contract.transactions.shift_remove(hash);
         }
 
         Ok(Immutable::Arc(entry.transaction))
