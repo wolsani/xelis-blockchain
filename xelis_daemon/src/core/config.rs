@@ -384,14 +384,14 @@ pub struct P2pConfig {
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StorageBackend {
     #[cfg(feature = "sled")]
-    #[serde(rename = "sled")]
     Sled,
     #[cfg(feature = "rocksdb")]
-    #[serde(rename = "rocksdb")]
     #[clap(name = "rocksdb")]
-    RocksDB
+    RocksDB,
+    Memory,
 }
 
 impl Default for StorageBackend {

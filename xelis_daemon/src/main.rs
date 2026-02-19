@@ -68,7 +68,7 @@ use core::{
         get_pow_algorithm_for_version,
         get_version_at_height
     },
-    storage::Storage
+    storage::{Storage, MemoryStorage}
 };
 
 #[cfg(feature = "rocksdb")]
@@ -278,6 +278,10 @@ async fn main() -> Result<()> {
         #[cfg(feature = "rocksdb")]
         StorageBackend::RocksDB => {
             let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb, blockchain_config.concurrency)?;
+            start_chain(prompt, storage, config).await
+        },
+        StorageBackend::Memory => {
+            let storage = MemoryStorage::new(config.network, blockchain_config.concurrency);
             start_chain(prompt, storage, config).await
         }
     }
