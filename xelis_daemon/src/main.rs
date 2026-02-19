@@ -277,7 +277,7 @@ async fn main() -> Result<()> {
         },
         #[cfg(feature = "rocksdb")]
         StorageBackend::RocksDB => {
-            let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb, blockchain_config.concurrency);
+            let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb, blockchain_config.concurrency)?;
             start_chain(prompt, storage, config).await
         }
     }

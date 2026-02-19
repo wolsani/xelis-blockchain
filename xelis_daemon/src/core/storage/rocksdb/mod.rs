@@ -160,7 +160,7 @@ pub struct RocksStorage {
 }
 
 impl RocksStorage {
-    pub fn new(dir: &str, network: Network, config: &RocksDBConfig, concurrency: usize) -> Self {
+    pub fn new(dir: &str, network: Network, config: &RocksDBConfig, concurrency: usize) -> Result<Self, BlockchainError> {
         let cfs = Column::iter()
             .map(|column| {
                 let name = column.to_string();
@@ -185,7 +185,7 @@ impl RocksStorage {
         opts.set_max_open_files(config.max_open_files);
         opts.set_keep_log_file_num(config.keep_max_log_files);
 
-        let mut env = Env::new().expect("Creating new env");
+        let mut env = Env::new().context("Creating new env")?;
         env.set_low_priority_background_threads(config.low_priority_background_threads as _);
         opts.set_env(&env);
         opts.set_compression_type(config.compression_mode.convert());
@@ -213,15 +213,21 @@ impl RocksStorage {
         }
 
         let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, format!("{}{}", dir, network.to_string().to_lowercase()), cfs)
-            .expect("Failed to open RocksDB");
+            .context("Failed to open RocksDB")?;
 
-        Self {
+        let mut db = Self {
             db: Arc::new(db),
             network,
             snapshot: None,
             cache: StorageCache::new(None),
             concurrency,
+        };
+
+        if let Some(pruned_topoheight) = db.load_optional_from_disk(Column::Common, PRUNED_TOPOHEIGHT)?{
+            db.cache.pruned_topoheight = Some(pruned_topoheight);
         }
+
+        Ok(db)
     }
 
     #[inline(always)]
