@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use pooled_arc::*;
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
@@ -32,7 +32,6 @@ use crate::core::{
         DagOrderProvider,
         DifficultyProvider,
         Storage,
-        Tips,
         TransactionProvider,
         VersionedContractBalance,
         VersionedContractData,
@@ -49,11 +48,22 @@ pub(crate) struct AccountEntry {
     pub registered_at: Option<TopoHeight>,
 }
 
+pub(crate) struct BlockEntry {
+    pub header: Arc<BlockHeader>,
+    pub metadata: BlockMetadata,
+}
+
+pub(crate) struct TransactionEntry {
+    pub transaction: Arc<Transaction>,
+    pub executed_in_block: Option<PooledArc<Hash>>,
+    pub linked_blocks: IndexSet<PooledArc<Hash>>,
+}
+
 // Internal asset structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AssetEntry {
-    data_pointer: Option<TopoHeight>,
-    supply_pointer: Option<TopoHeight>,
+    data: BTreeMap<TopoHeight, VersionedAssetData>,
+    supply: BTreeMap<TopoHeight, VersionedSupply>,
 }
 
 // Internal contract structure
@@ -76,25 +86,14 @@ pub struct MemoryStorage {
     cache: ChainCache,
     concurrency: usize,
 
-    // Top state
-    top_topoheight: TopoHeight,
-    top_height: u64,
-    pruned_topoheight: Option<TopoHeight>,
-
-    // Tips
-    tips: Tips,
-
     accounts: HashMap<PooledArc<PublicKey>, AccountEntry>,
 
     // Block data
-    blocks: HashMap<PooledArc<Hash>, Arc<BlockHeader>>,
-    block_metadata: HashMap<PooledArc<Hash>, BlockMetadata>,
+    blocks: IndexMap<PooledArc<Hash>, BlockEntry>,
     blocks_at_height: BTreeMap<u64, IndexSet<PooledArc<Hash>>>,
-    blocks_count: u64,
 
     // Transactions
-    transactions: HashMap<PooledArc<Hash>, Arc<Transaction>>,
-    txs_count: u64,
+    transactions: HashMap<PooledArc<Hash>, TransactionEntry>,
 
     // DAG order
     topo_by_hash: HashMap<PooledArc<Hash>, TopoHeight>,
@@ -103,22 +102,8 @@ pub struct MemoryStorage {
     // TopoHeight metadata
     topoheight_metadata: BTreeMap<TopoHeight, TopoHeightMetadata>,
 
-    // Client protocol
-    tx_executed_in_block: HashMap<PooledArc<Hash>, PooledArc<Hash>>,
-    tx_in_blocks: HashMap<PooledArc<Hash>, Tips>,
-
-    // Block execution order
-    block_execution_order: HashMap<PooledArc<Hash>, u64>,
-    blocks_execution_count: u64,
-
     // Assets: hash -> entry with pointers
     assets: HashMap<PooledArc<Hash>, AssetEntry>,
-
-    // Versioned assets: (topoheight, asset) -> VersionedAssetData
-    versioned_assets: HashMap<(TopoHeight, PooledArc<Hash>), VersionedAssetData>,
-
-    // Versioned asset supply: (topoheight, asset) -> VersionedSupply
-    versioned_assets_supply: HashMap<(TopoHeight, PooledArc<Hash>), VersionedSupply>,
 
     // Contracts: hash -> entry with pointers
     contracts: HashMap<PooledArc<Hash>, ContractEntry>,
@@ -161,26 +146,13 @@ impl MemoryStorage {
             concurrency,
             network,
             cache: ChainCache::default(),
-            top_topoheight: 0,
-            top_height: 0,
-            pruned_topoheight: None,
-            tips: Tips::default(),
-            blocks: HashMap::new(),
-            block_metadata: HashMap::new(),
+            blocks: IndexMap::new(),
             blocks_at_height: BTreeMap::new(),
-            blocks_count: 0,
             transactions: HashMap::new(),
-            txs_count: 0,
             topo_by_hash: HashMap::new(),
             hash_at_topo: BTreeMap::new(),
             topoheight_metadata: BTreeMap::new(),
-            tx_executed_in_block: HashMap::new(),
-            tx_in_blocks: HashMap::new(),
-            block_execution_order: HashMap::new(),
-            blocks_execution_count: 0,
             assets: HashMap::new(),
-            versioned_assets: HashMap::new(),
-            versioned_assets_supply: HashMap::new(),
             accounts: HashMap::new(),
             contracts: HashMap::new(),
             versioned_contracts: HashMap::new(),

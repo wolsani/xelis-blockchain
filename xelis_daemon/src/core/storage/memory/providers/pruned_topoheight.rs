@@ -9,11 +9,11 @@ use super::super::MemoryStorage;
 #[async_trait]
 impl PrunedTopoheightProvider for MemoryStorage {
     async fn get_pruned_topoheight(&self) -> Result<Option<TopoHeight>, BlockchainError> {
-        Ok(self.pruned_topoheight)
+        Ok(self.cache.pruned_topoheight)
     }
 
     async fn set_pruned_topoheight(&mut self, pruned_topoheight: Option<TopoHeight>) -> Result<(), BlockchainError> {
-        self.pruned_topoheight = pruned_topoheight;
+        self.cache.pruned_topoheight = pruned_topoheight;
         Ok(())
     }
 }

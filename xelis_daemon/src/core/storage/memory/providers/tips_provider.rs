@@ -8,11 +8,10 @@ use super::super::MemoryStorage;
 #[async_trait]
 impl TipsProvider for MemoryStorage {
     async fn get_tips(&self) -> Result<Tips, BlockchainError> {
-        Ok(self.tips.clone())
+        Ok(self.cache.tips.clone())
     }
 
     async fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
-        self.tips = tips.clone();
         self.cache.tips = tips.clone();
         Ok(())
     }

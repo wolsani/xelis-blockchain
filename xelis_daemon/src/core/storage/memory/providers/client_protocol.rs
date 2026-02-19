@@ -10,58 +10,75 @@ use super::super::MemoryStorage;
 #[async_trait]
 impl ClientProtocolProvider for MemoryStorage {
     async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
-        self.tx_executed_in_block.get(tx)
+        self.transactions.get(tx)
+            .and_then(|entry| entry.executed_in_block.as_ref())
             .map(|h| h.as_ref().clone())
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.tx_executed_in_block.contains_key(tx))
+        Ok(self.transactions.get(tx).map_or(false, |entry| entry.executed_in_block.is_some()))
     }
 
     async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.tx_executed_in_block.get(tx).map_or(false, |h| h.as_ref() == block))
+        Ok(self.transactions.get(tx)
+            .map_or(false, |entry| entry.executed_in_block.as_ref().map_or(false, |h| h.as_ref() == block)))
     }
 
     async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.tx_in_blocks.contains_key(hash))
+        Ok(self.transactions.get(hash).map_or(false, |entry| !entry.linked_blocks.is_empty()))
     }
 
     async fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.tx_in_blocks.get(tx).map_or(false, |set| set.contains(block)))
+        Ok(self.transactions.get(tx).map_or(false, |entry| entry.linked_blocks.contains(block)))
     }
 
     async fn add_block_linked_to_tx_if_not_present(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        let shared_tx = PooledArc::from_ref(tx);
-        let set = self.tx_in_blocks.entry(shared_tx).or_default();
-        Ok(set.insert(block.clone()))
+        if let Some(entry) = self.transactions.get_mut(tx) {
+            Ok(entry.linked_blocks.insert(PooledArc::from_ref(block)))
+        } else {
+            Err(BlockchainError::Unknown)
+        }
     }
 
     async fn unlink_transaction_from_block(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        if let Some(set) = self.tx_in_blocks.get_mut(tx) {
-            return Ok(set.remove(block));
+        if let Some(entry) = self.transactions.get_mut(tx) {
+            return Ok(entry.linked_blocks.shift_remove(block));
         }
         Ok(false)
     }
 
     async fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError> {
-        self.tx_in_blocks.get(hash)
-            .cloned()
+        self.transactions.get(hash)
+            .map(|entry| entry.linked_blocks.iter().map(|h| h.as_ref().clone()).collect())
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn mark_tx_as_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
-        self.tx_executed_in_block.insert(PooledArc::from_ref(tx), PooledArc::from_ref(block));
-        Ok(())
+        match self.transactions.get_mut(tx) {
+            Some(entry) => {
+                entry.executed_in_block = Some(PooledArc::from_ref(block));
+                Ok(())
+            },
+            None => Err(BlockchainError::Unknown),
+        }
     }
 
     async fn unmark_tx_from_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
-        self.tx_executed_in_block.remove(tx);
-        Ok(())
+        if let Some(entry) = self.transactions.get_mut(tx) {
+            entry.executed_in_block = None;
+            Ok(())
+        } else {
+            Err(BlockchainError::Unknown)
+        }
     }
 
     async fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError> {
-        self.tx_in_blocks.insert(PooledArc::from_ref(tx), blocks.clone());
-        Ok(())
+        if let Some(entry) = self.transactions.get_mut(tx) {
+            entry.linked_blocks = blocks.iter().map(|h| PooledArc::from_ref(h)).collect();
+            Ok(())
+        } else {
+            Err(BlockchainError::Unknown)
+        }
     }
 }

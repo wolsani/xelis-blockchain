@@ -11,7 +11,7 @@ use xelis_common::{
 use futures::Stream;
 use crate::core::{
     error::BlockchainError,
-    storage::TransactionProvider,
+    storage::{TransactionProvider, memory::TransactionEntry},
 };
 use super::super::MemoryStorage;
 
@@ -19,24 +19,29 @@ use super::super::MemoryStorage;
 impl TransactionProvider for MemoryStorage {
     async fn get_transaction(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         self.transactions.get(hash)
-            .map(|tx| Immutable::Arc(tx.clone()))
+            .map(|entry| Immutable::Arc(entry.transaction.clone()))
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
         self.transactions.get(hash)
-            .map(|tx| tx.size())
+            .map(|entry| entry.transaction.size())
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
-        Ok(self.txs_count)
+        Ok(self.transactions.len() as u64)
     }
 
     async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Stream<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        let iter = self.transactions.keys()
-            .filter(|hash| !self.tx_executed_in_block.contains_key(hash.as_ref()))
-            .map(|h| Ok(h.as_ref().clone()));
+        let iter = self.transactions.iter()
+            .filter_map(|(hash, entry)| {
+                if entry.executed_in_block.is_none() {
+                    Some(Ok(hash.as_ref().clone()))
+                } else {
+                    None
+                }
+            });
         Ok(stream::iter(iter))
     }
 
@@ -46,19 +51,22 @@ impl TransactionProvider for MemoryStorage {
 
     async fn add_transaction(&mut self, hash: &Hash, transaction: &Transaction) -> Result<(), BlockchainError> {
         let shared = PooledArc::from_ref(hash);
-        self.transactions.insert(shared, Arc::new(transaction.clone()));
+        self.transactions.insert(shared, TransactionEntry {
+            transaction: Arc::new(transaction.clone()),
+            executed_in_block: None,
+            linked_blocks: Default::default(),
+        });
         Ok(())
     }
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
-        let shared = PooledArc::from_ref(hash);
-        let tx = self.transactions.remove(&shared)
+        let entry = self.transactions.remove(hash)
             .ok_or(BlockchainError::Unknown)?;
 
-        if let Some(contract) = tx.invoked_contract() {
-            self.contract_transactions.remove(&(PooledArc::from_ref(contract), shared));
+        if let Some(contract) = entry.transaction.invoked_contract() {
+            self.contract_transactions.remove(&(PooledArc::from_ref(contract), PooledArc::from_ref(hash)));
         }
 
-        Ok(Immutable::Arc(tx))
+        Ok(Immutable::Arc(entry.transaction))
     }
 }

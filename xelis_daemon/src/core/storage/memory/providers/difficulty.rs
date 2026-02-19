@@ -32,14 +32,14 @@ impl DifficultyProvider for MemoryStorage {
     }
 
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
-        self.block_metadata.get(hash)
-            .map(|m| m.difficulty.clone())
+        self.blocks.get(hash)
+            .map(|entry| entry.metadata.difficulty.clone())
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
-        self.block_metadata.get(hash)
-            .map(|m| m.cumulative_difficulty.clone())
+        self.blocks.get(hash)
+            .map(|entry| entry.metadata.cumulative_difficulty.clone())
             .ok_or(BlockchainError::Unknown)
     }
 
@@ -50,13 +50,13 @@ impl DifficultyProvider for MemoryStorage {
 
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         self.blocks.get(hash)
-            .map(|h| Immutable::Arc(h.clone()))
+            .map(|h| Immutable::Arc(h.header.clone()))
             .ok_or(BlockchainError::Unknown)
     }
 
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
-        self.block_metadata.get(hash)
-            .map(|m| m.covariance.clone())
+        self.blocks.get(hash)
+            .map(|entry| entry.metadata.covariance.clone())
             .ok_or(BlockchainError::Unknown)
     }
 }

@@ -70,6 +70,8 @@ pub struct ChainCache {
     pub stable_topoheight: TopoHeight,
     // current tips of the chain
     pub tips: Tips,
+    // Pruned topoheight cache
+    pub pruned_topoheight: Option<TopoHeight>,
 }
 
 impl ChainCache {
@@ -92,6 +94,7 @@ impl ChainCache {
             stable_topoheight: self.stable_topoheight,
             difficulty: self.difficulty.clone(),
             tips: self.tips.clone(),
+            pruned_topoheight: self.pruned_topoheight,
         }
     }
 }
@@ -109,6 +112,7 @@ impl Default for ChainCache {
             stable_topoheight: 0,
             difficulty: GENESIS_BLOCK_DIFFICULTY,
             tips: Tips::default(),
+            pruned_topoheight: None,
         }
     }
 }

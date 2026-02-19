@@ -9,17 +9,29 @@ use super::super::super::MemoryStorage;
 #[async_trait]
 impl VersionedAssetsCirculatingSupplyProvider for MemoryStorage {
     async fn delete_versioned_assets_supply_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.versioned_assets_supply.retain(|&(t, _), _| t != topoheight);
+        self.assets.iter_mut().for_each(|(_, entry)| {
+            entry.supply.split_off(&topoheight);
+        });
+
         Ok(())
     }
 
     async fn delete_versioned_assets_supply_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        self.versioned_assets_supply.retain(|&(t, _), _| t <= topoheight);
+        self.assets.iter_mut().for_each(|(_, entry)| {
+            entry.supply.split_off(&(topoheight + 1));
+        });
+
         Ok(())
     }
 
     async fn delete_versioned_assets_supply_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
-        self.versioned_assets_supply.retain(|&(t, _), _| t >= topoheight);
+        let iter = self.assets.iter_mut()
+            .map(|(_, entry)| (entry.supply.split_off(&topoheight), &mut entry.supply));
+
+        for (to_keep, supply) in iter {
+            *supply = to_keep;
+        }
+
         Ok(())
     }
 }
