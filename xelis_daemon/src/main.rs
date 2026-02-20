@@ -54,7 +54,7 @@ use xelis_common::{
 use xelis_vm::Access;
 use crate::config::{MILLIS_PER_SECOND, get_stable_limit};
 use core::{
-    state::ChainState,
+    state::{ChainState, ApplicableChainState},
     blockchain::{
         get_block_reward,
         Blockchain,
@@ -352,6 +352,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
+    command_manager.add_command(Command::with_required_arguments("replay_tx", "Replay a transaction by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(replay_tx::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -1319,6 +1320,59 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     }
 
     manager.message(format!("Total storage size: {}", human_bytes(total_size as f64)));
+
+    Ok(())
+}
+
+async fn replay_tx<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let hash = arguments.get_value("hash")?.to_hash()?;
+    let tx = storage.get_transaction(&hash)
+        .await.context("Error while retrieving transaction")?;
+
+    manager.message(format!("Replaying transaction {}...", hash));
+    let executed_at = storage.get_block_executor_for_tx(&hash).await
+        .context("Error while retrieving transaction execution block")?;
+
+    let block = storage.get_block_by_hash(&executed_at).await
+        .context("Error while retrieving execution block")?;
+
+    let topoheight = storage.get_topo_height_for_hash(&executed_at)
+        .await.context("Error while retrieving topoheight for block")?;
+
+    let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, block.get_tips().iter()).await
+        .context("Error while calculating required base fee")?;
+
+    let base_height = blockdag::find_common_base_height(&*storage, block.get_tips(), block.get_version()).await
+        .context("Error while finding common base for tx verification")?;
+
+    let mut state = ApplicableChainState::new(
+        &*storage,
+        blockchain.get_contract_environments(),
+        0,
+        topoheight - 1,
+        block.get_version(),
+        &executed_at,
+        &block,
+        required_base_fee,
+        base_height,
+    );
+
+    let tx = tx.as_arc();
+    tx.apply_with_partial_verify(&hash, &mut state).await
+        .context("Error while re executing transaction")?;
+
+    if let Some(logs) = state.get_contract_logs_for_tx(&hash) {
+        manager.message(format!("- Contract logs:"));
+        for log in logs {
+            manager.message(format!("  - {:?}", log));
+        }
+    }
+
+    manager.message(format!("Transaction executed at block {}", executed_at));
 
     Ok(())
 }
