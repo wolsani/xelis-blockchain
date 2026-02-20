@@ -4,11 +4,12 @@ use std::borrow::Cow;
 use async_trait::async_trait;
 use anyhow::Context;
 use xelis_common::{
+    account::CiphertextCache,
     asset::AssetData,
     block::TopoHeight,
     contract::ContractModule,
     crypto::{Hash, PublicKey},
-    versioned_type::Versioned,
+    versioned_type::Versioned
 };
 use xelis_common::contract::{
     ContractStorage,
@@ -126,17 +127,24 @@ impl ContractProvider for MemoryStorage {
 #[async_trait]
 impl ContractStorage for MemoryStorage {
     async fn load_data(&self, contract: &Hash, key: &xelis_vm::ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<xelis_vm::ValueCell>)>, anyhow::Error> {
-        let res = self.get_contract_data_at_maximum_topoheight_for(contract, key, topoheight).await?;
-        Ok(res.map(|(topo, data)| (topo, data.take())))
+        let res = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await?;
+
+        match res {
+            Some((topoheight, data)) => match data.take() {
+                Some(data) => Ok(Some((topoheight, Some(data)))),
+                None => Ok(Some((topoheight, None))),
+            },
+            None => Ok(None),
+        }
     }
 
     async fn load_data_latest_topoheight(&self, contract: &Hash, key: &xelis_vm::ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error> {
-        let res = self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, key, topoheight).await?;
+        let res = self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight).await?;
         Ok(res)
     }
 
     async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        let res = ContractProvider::has_contract_at_maximum_topoheight(self, contract, topoheight).await?;
+        let res = self.has_contract_at_maximum_topoheight(contract, topoheight).await?;
         Ok(res)
     }
 }
@@ -147,24 +155,26 @@ impl ContractStorage for MemoryStorage {
 impl ContractInfoProvider for MemoryStorage {
     async fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
         let res = self.get_contract_balance_at_maximum_topoheight(contract, asset, topoheight).await?;
-        Ok(res.map(|(topo, balance)| (topo, balance.take())))
-    }
-
-    async fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, xelis_common::account::CiphertextCache)>, anyhow::Error> {
-        let res = self.get_balance_at_maximum_topoheight(key, asset, topoheight).await?;
-        Ok(res.map(|(topo, balance)| (topo, balance.take_balance())))
-    }
-
-    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        let res = ContractScheduledExecutionProvider::has_contract_scheduled_execution_at_topoheight(self, contract, topoheight).await?;
-        Ok(res)
+        Ok(res.map(|(topoheight, balance)| (topoheight, balance.take())))
     }
 
     async fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        let res = self.is_asset_registered_at_maximum_topoheight(asset, topoheight).await?;
-        Ok(res)
+        let contains = self.is_asset_registered_at_maximum_topoheight(asset, topoheight).await?;
+        Ok(contains)
     }
 
+    async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        let contains = self.is_account_registered_for_topoheight(key, topoheight).await?;
+        Ok(contains)
+    }
+
+    // Verify if we have already a registered execution for such contract at a specific topoheight
+    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        let contains = self.has_contract_scheduled_execution_at_topoheight(contract, topoheight).await?;
+        Ok(contains)
+    }
+
+    // Load the asset data from the storage
     async fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
         let res = self.get_asset_at_maximum_topoheight(asset, topoheight).await?;
         Ok(res.map(|(topo, v)| (topo, v.take())))
@@ -176,16 +186,18 @@ impl ContractInfoProvider for MemoryStorage {
             .context("Asset circulating supply not found")
     }
 
-    async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        let res = self.is_account_registered_for_topoheight(key, topoheight).await?;
-        Ok(res)
+    async fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error> {
+        let res = self.get_balance_at_maximum_topoheight(key, asset, topoheight).await?;
+        Ok(res.map(|(topoheight, balance)| (topoheight, balance.take_balance())))
     }
 
+    // Load a contract module
     async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ContractModule>)>, anyhow::Error> {
         let res = self.get_contract_at_maximum_topoheight_for(contract, topoheight).await?;
-        Ok(res.map(|(topo, module)| (topo, module.take().map(|v| v.into_owned()))))
+        Ok(res.map(|(topoheight, module)| (topoheight, module.take().map(|v| v.into_owned()))))
     }
 
+    // Check if a contract has already a callback registered for an event at topoheight
     async fn has_contract_callback_for_event(&self, contract: &Hash, event_id: u64, listener: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
         let res = self.get_event_callback_for_contract_at_maximum_topoheight(contract, event_id, listener, topoheight).await?;
         Ok(res.is_some_and(|(_, v)| v.get().is_some()))
