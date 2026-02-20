@@ -49,13 +49,6 @@ pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + Contra
     // Delete the last topoheight for a given contract
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError>;
 
-    // Check if a contract exists
-    // and that it has a Module
-    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError>;
-
-    // Check if we have the contract
-    async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError>;
-
     // Check if a contract exists at a given topoheight
     // If the version is None, it returns None
     async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;

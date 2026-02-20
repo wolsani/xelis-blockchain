@@ -113,31 +113,6 @@ impl ContractProvider for RocksStorage {
         }
     }
 
-    // Check if a contract exists
-    // and that it has a Module
-    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has contract {}", hash);
-        let Some(contract) = self.get_optional_contract_type(hash)? else {
-            return Ok(false)
-        };
-
-        let Some(pointer) = contract.module_pointer else {
-            return Ok(false)
-        };
-
-        let key = Self::get_versioned_contract_key(contract.id, pointer);
-        // We can just read the Option as a bool because of how we store the data
-        self.load_from_disk::<_, (Option<TopoHeight>, bool)>(Column::VersionedContracts, &key)
-            .map(|v| v.1)
-    }
-
-    // Check if we have the contract
-    async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has contract pointer {}", hash);
-        self.get_optional_contract_type(hash)
-            .map(|res| res.map_or(false, |v| v.module_pointer.is_some()))
-    }
-
     // Check if a contract exists at a given topoheight
     // If the version is None, it returns false
     async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {

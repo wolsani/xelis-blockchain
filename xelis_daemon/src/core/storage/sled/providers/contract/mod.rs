@@ -144,20 +144,6 @@ impl ContractProvider for SledStorage {
         Ok(())
     }
 
-    async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("Checking if contract {} exists", hash);
-        self.contains_data(&self.contracts, hash.as_bytes())
-    }
-
-    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("Checking if contract {} exists", hash);
-        let Some(pointer) = self.get_last_topoheight_for_contract(hash).await? else {
-            return Ok(false)
-        };
-        
-        self.has_contract_module_at_topoheight(hash, pointer).await
-    }
-
     async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("Checking if contract module {} exists at topoheight {}", hash, topoheight);
         let contract = self.get_contract_at_topoheight_for(hash, topoheight).await?;

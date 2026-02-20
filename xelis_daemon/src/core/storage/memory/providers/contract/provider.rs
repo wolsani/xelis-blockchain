@@ -83,14 +83,6 @@ impl ContractProvider for MemoryStorage {
         Ok(())
     }
 
-    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.contracts.contains_key(hash))
-    }
-
-    async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.contracts.get(hash).and_then(|c| c.modules.last_key_value()).is_some())
-    }
-
     async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         Ok(self.contracts.get(hash)
             .and_then(|entry| entry.modules.get(&topoheight))
