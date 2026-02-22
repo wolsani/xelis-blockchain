@@ -639,10 +639,12 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
         let contract = self.inner.internal_get_contract_module(&contract_hash).await?;
 
+        // Starting V6, we fully clone the contract, not just its references
+        let cache_clone_refs = self.block_version < BlockVersion::V6;
         // Find the contract cache in our cache map
         // We apply the deposits below in case we have any
         let mut cache = self.contract_manager.caches.get(&contract_hash)
-            .cloned()
+            .map(|c| c.clone_with(cache_clone_refs))
             .unwrap_or_default();
 
         // We need to add the deposits to the balances
@@ -720,6 +722,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             gas_fee_allowance: 0,
             environments: Cow::Borrowed(self.inner.environments),
             loaded_modules: Default::default(),
+            cache_clone_refs,
         };
 
         let environment = self.environments.get(&contract.version)
