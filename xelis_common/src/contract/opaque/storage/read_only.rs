@@ -60,9 +60,9 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
     }
 
     // Read from global cache first, then fallback to provider
-    let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone())
+    let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)
         .storage
-        .entry(key.clone()) {
+        .entry(key.clone_ref()) {
             Entry::Occupied(v) => v.get()
                 .as_ref()
                 .and_then(|(_, v)| v.clone()),
@@ -78,7 +78,7 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
 
     // We are forced to do a deep clone in case a contract try to attack
     // another contract memory due to how XVM handle references
-    Ok(SysCallResult::Return(value.map(|v| v.deep_clone()).unwrap_or_default().into()))
+    Ok(SysCallResult::Return(value.unwrap_or_default().into()))
 }
 
 pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
@@ -95,9 +95,9 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIns
     }
 
     // Read from global cache first, then fallback to provider
-    let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone())
+    let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)
         .storage
-        .entry(key.clone()) {
+        .entry(key.clone_ref()) {
             Entry::Occupied(v) => v.get()
                 .as_ref()
                 .map_or(false, |(_, v)| v.is_some()),

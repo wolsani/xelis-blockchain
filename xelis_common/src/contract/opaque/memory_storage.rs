@@ -63,7 +63,8 @@ pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params
                 &cache.memory_shared
             } else {
                 &cache.memory
-            }.get(&key).cloned()
+            }.get(&key)
+            .map(|v| v.clone_ref())
         ).unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))
@@ -105,7 +106,12 @@ pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut param
 
     let state = state_from_context(context)?;
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(
+        &mut state.changes.caches,
+        state.global_caches,
+        metadata.metadata.contract_executor.clone(),
+        state.cache_clone_refs,
+    );
     let memory = if storage.shared {
         &mut cache.memory_shared
     } else {
@@ -127,7 +133,12 @@ pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut para
     let key = params.remove(0)
         .into_owned();
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(
+        &mut state.changes.caches,
+        state.global_caches,
+        metadata.metadata.contract_executor.clone(),
+        state.cache_clone_refs,
+    );
     let memory = if storage.shared {
         &mut cache.memory_shared
     } else {

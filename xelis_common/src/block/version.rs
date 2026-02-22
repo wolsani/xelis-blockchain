@@ -22,7 +22,7 @@ pub enum BlockVersion {
     V4 = 4,
     // TX Base Fee in DAG
     V5 = 5,
-    // DAG Improvements
+    // DAG Improvements, Smart Contracts new features
     V6,
 }
 

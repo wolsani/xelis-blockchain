@@ -400,7 +400,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
                 }
             }
         }
-        
+
         // Create the contract environment
         let environment = ContractEnvironment {
             environment: &self.env.environment(),
@@ -439,6 +439,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
             gas_fee_allowance: 0,
             environments: Cow::Owned(HashMap::new()),
             loaded_modules: Default::default(),
+            cache_clone_refs: false,
         };
 
         Ok((environment, chain_state))

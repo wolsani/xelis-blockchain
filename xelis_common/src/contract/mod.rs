@@ -236,6 +236,8 @@ pub struct ChainState<'a> {
     // This is reduced from the used gas fee at the end of the execution
     // to prevent double refunding/paying
     pub gas_fee_allowance: u64,
+    // Internal flag to determine if we should clone refs in the cache or not
+    pub cache_clone_refs: bool,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -2257,7 +2259,7 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut VMContext
 // Function helper to get the balance for the given asset
 // This will first check in our current changes, then in the previous execution cache
 pub async fn get_balance_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
-    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone()).balances.entry(asset.clone()) {
+    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone(), state.cache_clone_refs).balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let v = get_balance_from_provider(provider, state.topoheight, &contract, &asset).await?;
@@ -2268,7 +2270,7 @@ pub async fn get_balance_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &
 
 // Function helper to get the mutable balance for the given asset
 pub async fn get_mut_balance_for_contract<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut (VersionedState, u64), anyhow::Error> {
-    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone()).balances.entry(asset.clone()) {
+    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone(), state.cache_clone_refs).balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut()
             .get_or_insert((VersionedState::New, 0)),
         Entry::Vacant(entry) => {
@@ -2281,12 +2283,13 @@ pub async fn get_mut_balance_for_contract<'a, 'b: 'a, P: ContractProvider>(provi
     })
 }
 
-pub fn get_cache_for_contract<'a>(caches: &'a mut HashMap<Hash, ContractCache>, global_caches: &'a HashMap<Hash, ContractCache>, contract: Hash) -> &'a mut ContractCache {
+// Get the cache for the given contract, if it doesn't exist, it will be created and initialized with the global cache if exists
+pub fn get_cache_for_contract<'a>(caches: &'a mut HashMap<Hash, ContractCache>, global_caches: &'a HashMap<Hash, ContractCache>, contract: Hash, clone_refs: bool) -> &'a mut ContractCache {
     match caches.entry(contract) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let cache = global_caches.get(entry.key())
-                .cloned()
+                .map(|c| c.clone_with(clone_refs))
                 .unwrap_or_default();
 
             entry.insert(cache)
@@ -2470,7 +2473,7 @@ fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'
     }
 
     let state = state_from_context(context)?;
-    let entry = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone())
+    let entry = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs)
         .events.entry(id)
         .or_insert_with(Vec::new);
 
@@ -2532,7 +2535,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
     let listeners = state.changes.events_listeners.entry((contract.clone(), event_id))
         .or_insert_with(Default::default);
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone());
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
 
     // Event is already registered in our cache
     if !cache.events_listeners.insert((contract.clone(), event_id)) {

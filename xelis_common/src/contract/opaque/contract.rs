@@ -148,7 +148,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
 
     let p = p.into_iter()
         .rev()
-        .map(|v| v.to_owned().into())
+        .map(|v| v.as_ref().clone().into())
         .collect::<VecDeque<_>>();
 
     // For backward compatibility, we need to switch the environment
@@ -205,7 +205,7 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
             Reference::Borrowed(v) => Arc::new((**v).clone()),
             Reference::Shared(v) => v.clone(),
         },
-        // TODO: fetch the environment when we have a different one
+        // Environment stay the same as we have currently
         environment: None,
         chunk: chunk_id,
         params: p,
