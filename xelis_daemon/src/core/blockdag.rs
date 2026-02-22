@@ -496,7 +496,7 @@ pub async fn verify_non_reachability<P>(provider: &P, tips: &IndexSet<Hash>, blo
     let tips_count = tips.len();
     let reach = stream::iter(tips.iter())
         .map(|hash| build_reachability(provider, hash.clone(), block_version))
-        .buffer_unordered(provider.concurrency())
+        .buffered(provider.concurrency())
         .boxed()
         .try_collect::<Vec<_>>().await?;
 
