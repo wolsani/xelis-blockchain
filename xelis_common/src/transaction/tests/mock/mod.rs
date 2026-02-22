@@ -11,34 +11,35 @@ use crate::{
     block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
     config::XELIS_ASSET,
     contract::{
-        ChainState as ContractChainState,
         AssetChanges,
-        ContractEventTracker,
-        ChainStateChanges,
-        ExecutionsManager,
-        ExecutionsChanges,
-        EventCallbackRegistration,
         CallbackEvent,
+        ChainState as ContractChainState,
+        ChainStateChanges,
         ContractCache,
+        ContractEnvironments,
+        ContractEventTracker,
         ContractLog,
         ContractMetadata,
         ContractModule,
         ContractVersion,
+        EventCallbackRegistration,
+        ExecutionsChanges,
+        ExecutionsManager,
         InterContractPermission,
         build_environment,
         vm::{self, ContractCaller, InvokeContract}
     },
     crypto::{
-        elgamal::{Ciphertext, CompressedPublicKey},
         Hash,
-        PublicKey
+        PublicKey,
+        elgamal::{Ciphertext, CompressedPublicKey}
     },
     transaction::{
-        verify::{BlockchainApplyState, BlockchainContractState, BlockchainVerificationState, ContractEnvironment},
         ContractDeposit,
         MultiSigPayload,
         Reference,
         Transaction,
+        verify::{BlockchainApplyState, BlockchainContractState, BlockchainVerificationState, ContractEnvironment}
     },
     versioned_type::VersionedState
 };
@@ -66,7 +67,8 @@ pub struct MockChainState {
     pub burned_coins: HashMap<Hash, u64>,
     pub gas_fee: u64,
     pub burned_fee: u64,
-    pub env: Arc<EnvironmentBuilder<'static, ContractMetadata>>,
+    pub env_builders: HashMap<ContractVersion, Arc<EnvironmentBuilder<'static, ContractMetadata>>>,
+    pub environments: ContractEnvironments,
     pub provider: MockStorageProvider,
     pub mainnet: bool,
     pub block_hash: Hash,
@@ -76,9 +78,9 @@ pub struct MockChainState {
 }
 
 impl MockChainState {
-    pub fn new() -> Self {
+    pub fn with(version: BlockVersion) -> Self {
         let header = BlockHeader::new(
-            BlockVersion::V3,
+            version,
             0,
             0,
             IndexSet::new(),
@@ -86,6 +88,14 @@ impl MockChainState {
             CompressedPublicKey::new(CompressedRistretto::identity()),
             IndexSet::new(),
         );
+
+        let env_builders: HashMap<ContractVersion, Arc<EnvironmentBuilder<ContractMetadata>>> = ContractVersion::variants()
+            .into_iter()
+            .map(|version| {
+                let env = build_environment::<MockStorageProvider>(version);
+                (version, Arc::new(env))
+            })
+            .collect();
 
         Self {
             assets: HashMap::new(),
@@ -99,7 +109,10 @@ impl MockChainState {
             burned_coins: HashMap::new(),
             gas_fee: 0,
             burned_fee: 0,
-            env: Arc::new(build_environment::<MockStorageProvider>(ContractVersion::V1)),
+            environments: env_builders.iter()
+                .map(|(version, env)| (*version, Arc::new(env.environment().clone())))
+                .collect(),
+            env_builders,
             provider: MockStorageProvider::default(),
             mainnet: false,
             block_hash: Hash::zero(),
@@ -107,6 +120,10 @@ impl MockChainState {
             contract_caches: HashMap::new(),
             executions: ExecutionsChanges::default(),
         }
+    }
+
+    pub fn new() -> Self {
+        Self::with(BlockVersion::V3)
     }
 
     pub async fn on_post_execution(&mut self, caller: &Hash) -> Result<(), anyhow::Error> {
@@ -297,8 +314,8 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
         Ok(self.multisig.get(account))
     }
 
-    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>,  anyhow::Error> {
-        Ok(self.env.environment())
+    async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, anyhow::Error> {
+        Ok(&self.environments[&version])
     }
 
     async fn set_contract_module(
@@ -336,7 +353,7 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
         contract: &'a Hash
     ) -> Result<(&Module, &Environment<ContractMetadata>),  anyhow::Error> {
         let module = self.internal_load_contract_module(contract)?;
-        Ok((&module.module, self.env.environment()))
+        Ok((&module.module, &self.environments[&module.version]))
     }
 }
 
@@ -403,7 +420,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
 
         // Create the contract environment
         let environment = ContractEnvironment {
-            environment: &self.env.environment(),
+            environment: &self.environments[&contract_module.version],
             module: &contract_module.module,
             version: contract_module.version,
             provider: &self.provider,
@@ -411,7 +428,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
 
         // Create the chain state using stored references
         let chain_state = ContractChainState {
-            debug_mode: false,
+            debug_mode: true,
             mainnet: self.mainnet,
             // We only provide the current contract cache available
             // others can be lazily added to it

@@ -16,7 +16,7 @@ async fn contract_event_flow() {
     "#;
 
     let mut chain_state = MockChainState::new();
-    let emitter_hash = create_contract(&mut chain_state, code).expect("create emit event contract");
+    let emitter_hash = create_contract(&mut chain_state, code, ContractVersion::V1).expect("create emit event contract");
 
     let code = r#"
         fn on_contract_event(a: string, b: string) -> u64 {
@@ -36,7 +36,7 @@ async fn contract_event_flow() {
     "#.replace("CONTRACT_HASH", &emitter_hash.to_string());
 
     // Deploy the listener hash
-    let (_, execution) = deploy_contract(&mut chain_state, &code).await
+    let (_, execution) = deploy_contract(&mut chain_state, &code, ContractVersion::V1).await
         .expect("deploy listener contract");
 
     assert!(execution.is_success(), "listener contract deployment failed {:?}", execution);

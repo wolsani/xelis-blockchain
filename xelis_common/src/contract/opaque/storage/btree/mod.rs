@@ -1156,7 +1156,7 @@ async fn write_storage_value<'ty, P: ContractProvider>(
     ctx.charge_write(size)?;
 
     let cache = get_cache_for_contract(&mut ctx.state.changes.caches, ctx.state.global_caches, ctx.contract.clone(), ctx.state.cache_clone_refs);
-    Ok(match cache.storage.entry(key.clone()) {
+    Ok(match cache.storage.entry(key.clone_ref()) {
         Entry::Occupied(mut occ) => {
             let slot = occ.get_mut();
             if let Some((version, stored)) = slot {
