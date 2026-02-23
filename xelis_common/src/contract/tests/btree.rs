@@ -153,12 +153,12 @@ async fn test_btree_duplicate_keys() {
             return 0
         }
 
-        entry get_first(key: bytes) -> bytes {
+        entry get_first(key: bytes) -> optional<bytes> {
             let store = BTreeStore::new(key);
             return store.get(key)
         }
 
-        entry delete_and_get_next(key: bytes) -> bytes {
+        entry delete_and_get_next(key: bytes) -> optional<bytes> {
             let store = BTreeStore::new(key);
             store.delete(key);
             return store.get(key)
@@ -198,6 +198,11 @@ async fn test_btree_duplicate_keys() {
 
     assert!(result.is_success(), "get first should succeed: {:?}", result);
 
+    let ExitValue::Payload(ValueCell::Bytes(payload)) = result.exit_value else {
+        panic!("invalid exit value");
+    };
+    assert!(payload == b"value1".to_vec(), "first value should be value1");
+
     // Delete first and get next value
     let result = invoke_contract(
         &mut chain_state,
@@ -209,24 +214,34 @@ async fn test_btree_duplicate_keys() {
     .expect("delete and get next");
 
     assert!(result.is_success(), "delete and get next should succeed: {:?}", result);
+
+    let ExitValue::Payload(ValueCell::Bytes(payload)) = result.exit_value else {
+        panic!("invalid exit value");
+    };
+
+    assert!(payload == b"value2".to_vec(), "next value should be value2");
 }
 
 /// Test internal mutability: modifying a value after retrieval should NOT affect storage
 #[tokio::test]
-async fn test_btree_internal_mutability_string() {
+async fn test_btree_internal_mutability() {
     // This test demonstrates that BTree values are stored by value and changes
     // to the retrieved value don't affect the original stored value
     let code = r#"
-        entry store_data(key: bytes, data_bytes: bytes) {
-            let store = BTreeStore::new(key);
-            store.insert(key, data_bytes);
-            return 0
+        struct Foo {
+            data: u64[]
         }
 
-        entry get_and_verify(key: bytes) -> bool {
-            let store = BTreeStore::new(key);
-            let retrieved = store.get(key);
-            return retrieved.len() > 0
+        entry get_and_verify() {
+            let foo = Foo { data: [1, 2, 3] };
+            let store = BTreeStore::new(b"ns");
+            store.insert(b"key", foo);
+            foo.data[0] = 42; // Modify retrieved value
+
+            let tmp: Foo = store.get(b"key").unwrap();
+            assert(tmp != foo);
+
+            return 0
         }
     "#;
 
@@ -237,76 +252,14 @@ async fn test_btree_internal_mutability_string() {
         .0;
 
     // Store data
-    invoke_contract(
+    let result = invoke_contract(
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(0),
-        vec![
-            ValueCell::Bytes("key1".as_bytes().to_vec()),
-            ValueCell::Bytes("data".as_bytes().to_vec()),
-        ],
+        vec![],
     )
     .await
     .expect("store data");
-
-    // Get and verify it's unchanged
-    let result = invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("key1".as_bytes().to_vec())],
-    )
-    .await
-    .expect("get and verify");
-
-    assert!(result.is_success(), "get and verify should succeed: {:?}", result);
-}
-
-/// Test internal mutability: numeric types and references
-#[tokio::test]
-async fn test_btree_internal_mutability_numeric() {
-    let code = r#"
-        entry store_number(key: bytes, val: bytes) {
-            let store = BTreeStore::new(key);
-            store.insert(key, val);
-            return 0
-        }
-
-        entry get_and_verify(key: bytes) -> bool {
-            let store = BTreeStore::new(key);
-            let value = store.get(key);
-            return value.len() > 0
-        }
-    "#;
-
-    let mut chain_state = MockChainState::new();
-    let contract_hash = deploy_contract(&mut chain_state, code, ContractVersion::V1)
-        .await
-        .expect("deploy contract")
-        .0;
-
-    // Store number
-    invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(0),
-        vec![
-            ValueCell::Bytes("key1".as_bytes().to_vec()),
-            ValueCell::Bytes("data".as_bytes().to_vec()),
-        ],
-    )
-    .await
-    .expect("store number");
-
-    // Get and verify
-    let result = invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("key1".as_bytes().to_vec())],
-    )
-    .await
-    .expect("get and verify");
 
     assert!(result.is_success(), "get and verify should succeed: {:?}", result);
 }
@@ -315,26 +268,11 @@ async fn test_btree_internal_mutability_numeric() {
 #[tokio::test]
 async fn test_btree_different_namespaces() {
     let code = r#"
-        entry insert_to_store1(key: bytes, value: bytes) {
-            let store = BTreeStore::new(bytes(1));
-            store.insert(key, value);
+        entry insert_to_store1(namespace: bytes) {
+            let store = BTreeStore::new(namespace);
+            assert(store.get(b"key").is_none());
+            store.insert(b"key", b"value");
             return 0
-        }
-
-        entry insert_to_store2(key: bytes, value: bytes) {
-            let store = BTreeStore::new(bytes(2));
-            store.insert(key, value);
-            return 0
-        }
-
-        entry get_from_store1(key: bytes) -> bytes {
-            let store = BTreeStore::new(bytes(1));
-            return store.get(key)
-        }
-
-        entry get_from_store2(key: bytes) -> bytes {
-            let store = BTreeStore::new(bytes(2));
-            return store.get(key)
         }
     "#;
 
@@ -344,74 +282,47 @@ async fn test_btree_different_namespaces() {
         .expect("deploy contract")
         .0;
 
-    // Insert into store1
-    invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(0),
-        vec![
-            ValueCell::Bytes("key".as_bytes().to_vec()),
-            ValueCell::Bytes("value1".as_bytes().to_vec()),
-        ],
-    )
-    .await
-    .expect("insert to store1");
+    for i in 0..5 {
+        let ns = format!("ns{}", i);
+        let result = invoke_contract(
+            &mut chain_state,
+            &contract_hash,
+            InvokeContract::Entry(0),
+            vec![ValueCell::Bytes(ns.as_bytes().to_vec())],
+        )
+        .await
+        .expect("insert to store");
 
-    // Insert into store2
-    invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(1),
-        vec![
-            ValueCell::Bytes("key".as_bytes().to_vec()),
-            ValueCell::Bytes("value2".as_bytes().to_vec()),
-        ],
-    )
-    .await
-    .expect("insert to store2");
+        assert!(result.is_success(), "insert to store should succeed: {:?}", result);
+    }
 
-    // Verify store1 has value1
-    let result1 = invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(2),
-        vec![ValueCell::Bytes("key".as_bytes().to_vec())],
-    )
-    .await
-    .expect("get from store1");
-
-    assert!(result1.is_success(), "get from store1 should succeed: {:?}", result1);
-
-    // Verify store2 has value2
-    let result2 = invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(3),
-        vec![ValueCell::Bytes("key".as_bytes().to_vec())],
-    )
-    .await
-    .expect("get from store2");
-
-    assert!(result2.is_success(), "get from store2 should succeed: {:?}", result2);
 }
 
 /// Test BTree cursor operations (seek)
 #[tokio::test]
 async fn test_btree_cursor_seek() {
     let code = r#"
-        entry insert_values(key: bytes) {
-            let store = BTreeStore::new(key);
-            store.insert(bytes(1), bytes(1));
-            store.insert(bytes(2), bytes(2));
-            store.insert(bytes(3), bytes(3));
-            store.insert(bytes(4), bytes(4));
-            return 0
-        }
+        entry cursor_test() {
+            let store = BTreeStore::new(b"ns");
 
-        entry has_data(key: bytes) -> bool {
-            let store = BTreeStore::new(key);
-            let value = store.get(key);
-            return value.len() > 0
+            foreach i in 0..10 {
+                store.insert(b"key", b"value");
+            }
+
+            let count = 0;
+            let (cursor, entry) = store.seek(b"key", BTreeSeekBias::GreaterOrEqual, true);
+            while entry.is_some() {
+                count += 1;
+                let e = entry.unwrap();
+                assert(e.key == b"key");
+                assert(e.value == b"value");
+
+                entry = cursor.next();
+            }
+
+            assert(count == 10);
+
+            return 0
         }
     "#;
 
@@ -426,22 +337,10 @@ async fn test_btree_cursor_seek() {
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(0),
-        vec![ValueCell::Bytes("ns".as_bytes().to_vec())],
+        vec![],
     )
     .await
     .expect("insert values");
 
     assert!(result.is_success(), "insert values should succeed: {:?}", result);
-
-    // Verify data exists
-    let result = invoke_contract(
-        &mut chain_state,
-        &contract_hash,
-        InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("ns".as_bytes().to_vec())],
-    )
-    .await
-    .expect("has data");
-
-    assert!(result.is_success(), "has data should succeed: {:?}", result);
 }
