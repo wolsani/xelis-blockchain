@@ -1,4 +1,5 @@
 mod kind;
+mod manager;
 
 use std::{borrow::Borrow, hash, sync::Arc};
 
@@ -49,6 +50,7 @@ use crate::{
 };
 
 pub use kind::*;
+pub use manager::*;
 
 // Scheduled executions are unique per contract
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
