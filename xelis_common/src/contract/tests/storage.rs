@@ -1,4 +1,4 @@
-use crate::{contract::vm::ExitValue, versioned_type::VersionedState};
+use crate::versioned_type::VersionedState;
 
 use super::*;
 
@@ -6,21 +6,32 @@ use super::*;
 async fn test_insert_and_get() {
     let code = r#"
         struct Foo {
-            value: bytes
+            value: u64[]
         }
 
-        entry insert_value(key: bytes, value: Foo) {
+        entry insert_value() {
+            let foo = Foo {
+                value: [1, 2, 3]
+            };
             let storage = Storage::new();
-            require(storage.store(key, value).is_none(), "Key already exists");
-            value.value = b"overwritten_value";
-            println(value.value);
+            require(storage.store(b"key", foo).is_none(), "Key already exists");
+            foo.value = [4, 5, 6];
+
+            let tmp: Foo = storage.load(b"key").unwrap();
+            assert(tmp.value == [1, 2, 3]);
+            tmp.value = [7, 8, 9];
+
+            let tmp2: Foo = storage.load(b"key").unwrap();
+            assert(tmp2.value == [1, 2, 3]);
+
             return 0
         }
 
-        entry get_value(key: bytes) -> bytes {
+        entry get_value() {
             let storage = Storage::new();
-            let value: Foo = storage.load(key).unwrap();
-            return value.value
+            let value: Foo = storage.load(b"key").unwrap();
+            assert(value.value == [1, 2, 3]);
+            return 0
         }
     "#;
 
@@ -30,45 +41,56 @@ async fn test_insert_and_get() {
         .expect("deploy contract")
         .0;
 
-    // Insert a value
-    let value = ValueCell::Object(vec![
-        ValueCell::Bytes("test_value".as_bytes().to_vec()).into()
-    ]);
     let result = invoke_contract(
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(0),
-        vec![
-            ValueCell::Bytes("test_key".as_bytes().to_vec()),
-            value.clone(),            
-        ],
+        vec![],
     )
     .await
     .expect("insert value");
 
     assert!(result.is_success(), "insert should succeed: {:?}", result);
 
+    let key = ValueCell::Bytes(b"key".to_vec());
     let storage = &chain_state.contract_caches.get(&contract_hash)
         .expect("contract cache")
         .storage;
     assert!(storage.len() == 1, "storage should have 1 entry after insert");
-    assert!(storage.get(&ValueCell::Bytes("test_key".as_bytes().to_vec())) == Some(&Some((VersionedState::New, Some(value)))), "storage should contain the inserted key");
+    assert!(matches!(storage.get(&key), Some(&Some((VersionedState::New, Some(_))))), "storage should contain the inserted key");
 
     // Get the value back
     let result = invoke_contract(
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("test_key".as_bytes().to_vec())],
+        vec![],
     )
     .await
     .expect("get value");
 
     assert!(result.is_success(), "get should succeed: {:?}", result);
 
-    let ExitValue::Payload(ValueCell::Bytes(payload)) = result.exit_value else {
-        panic!("invalid exit value");
-    };
+    let storage = &chain_state.contract_caches.get(&contract_hash)
+        .expect("contract cache")
+        .storage;
+    let value = storage.get(&key)
+        .expect("key should exist in storage")
+        .as_ref()
+        .expect("value should be present")
+        .1
+        .as_ref()
+        .expect("value should be Some");
 
-    assert!(payload == b"test_value".to_vec());
+    let values: Vec<_> = value
+        .as_vec()
+        .unwrap()
+        [0]
+        .as_ref()
+        .as_vec()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_ref().as_u64().unwrap())
+        .collect();
+    assert!(values == vec![1, 2, 3]);
 }
