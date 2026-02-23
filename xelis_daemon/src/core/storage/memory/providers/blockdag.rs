@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use xelis_common::{
     block::{BlockHeader, TopoHeight},
@@ -26,19 +27,22 @@ impl BlockDagProvider for MemoryStorage {
     async fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         self.topoheight_metadata.get(&topoheight)
             .map(|m| m.block_reward)
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Block reward not found for topoheight {}", topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_emitted_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         self.topoheight_metadata.get(&topoheight)
             .map(|m| m.emitted_supply)
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Emitted supply not found for topoheight {}", topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_metadata_at_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeightMetadata, BlockchainError> {
         self.topoheight_metadata.get(&topoheight)
             .copied()
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Metadata not found for topoheight {}", topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn set_metadata_at_topoheight(&mut self, topoheight: TopoHeight, metadata: TopoHeightMetadata) -> Result<(), BlockchainError> {

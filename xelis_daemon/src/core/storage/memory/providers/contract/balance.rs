@@ -1,5 +1,6 @@
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
+use anyhow::Context;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
@@ -32,7 +33,8 @@ impl ContractBalanceProvider for MemoryStorage {
             .and_then(|entry| entry.balances.get(asset))
             .and_then(|versions| versions.get(&topoheight))
             .cloned()
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("contract balance not found for contract {}, asset {:?}, topoheight {}", contract, asset, topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_contract_balance_at_maximum_topoheight(&self, contract: &Hash, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractBalance)>, BlockchainError> {
@@ -56,7 +58,8 @@ impl ContractBalanceProvider for MemoryStorage {
             .and_then(|entry| entry.balances.get(asset))
             .and_then(|versions| versions.iter().next_back())
             .map(|(t, b)| (*t, b.clone()))
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("last contract balance not found for contract {:?}, asset {}", contract, asset))
+            .map_err(|e| e.into())
     }
 
     async fn get_contract_assets_for<'a>(&'a self, contract: &'a Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {

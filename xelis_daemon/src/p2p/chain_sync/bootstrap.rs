@@ -478,7 +478,7 @@ impl<S: Storage> P2pServer<S> {
                         let hash_at_topo = storage.get_hash_at_topo_height(common_point.get_topoheight()).await?;
                         if hash_at_topo != *common_point.get_hash() {
                             warn!("Common point is {} while our hash at topoheight {} is {}. Aborting", common_point.get_hash(), common_point.get_topoheight(), storage.get_hash_at_topo_height(common_point.get_topoheight()).await?);
-                            return Err(BlockchainError::Unknown)
+                            return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()).into());
                         }
 
                         let top_block_hash = storage.get_top_block_hash().await?;
@@ -499,7 +499,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     } else {
                         warn!("No common point with {} ! Not same chain ?", peer);
-                        return Err(BlockchainError::Unknown)
+                        return Err(P2pError::NoCommonPoint.into());
                     }
 
                     top_topoheight = topoheight;

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use pooled_arc::PooledArc;
 use std::sync::Arc;
 use async_trait::async_trait;
@@ -42,7 +43,7 @@ impl BlockProvider for MemoryStorage {
 
     async fn get_block_by_hash(&self, hash: &Hash) -> Result<Block, BlockchainError> {
         let entry = self.blocks.get(hash)
-            .ok_or(BlockchainError::Unknown)?;
+            .with_context(|| format!("Block not found for hash {}", hash))?;
 
         let header = &entry.header;
         let mut transactions = Vec::with_capacity(header.get_txs_count());
@@ -66,7 +67,8 @@ impl BlockProvider for MemoryStorage {
     async fn get_block_size_ema(&self, hash: &Hash) -> Result<u32, BlockchainError> {
         self.blocks.get(hash)
             .map(|entry| entry.metadata.size_ema)
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Block size EMA not found for hash {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn save_block(
@@ -103,7 +105,7 @@ impl BlockProvider for MemoryStorage {
 
     async fn delete_block_by_hash(&mut self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         let entry = self.blocks.shift_remove(hash)
-            .ok_or(BlockchainError::Unknown)?;
+            .with_context(|| format!("Cannot delete block, not found: {}", hash))?;
 
         let header = entry.header;
         self.remove_block_hash_at_height(hash, header.get_height()).await?;

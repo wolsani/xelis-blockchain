@@ -1,3 +1,4 @@
+use anyhow::Context;
 use itertools::Either;
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
@@ -21,7 +22,8 @@ impl AssetProvider for MemoryStorage {
     async fn has_asset_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         self.assets.get(hash)
             .map(|a| a.data.contains_key(&topoheight))
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Asset {} not found", hash))
+            .map_err(|e| e.into())
     }
 
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {

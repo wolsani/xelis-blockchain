@@ -1,5 +1,6 @@
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
+use anyhow::Context;
 use xelis_common::{
     account::{AccountSummary, Balance, VersionedBalance},
     block::TopoHeight,
@@ -30,7 +31,8 @@ impl BalanceProvider for MemoryStorage {
             .and_then(|acc| acc.balances.get(asset))
             .and_then(|versions| versions.get(&topoheight))
             .cloned()
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Balance not found for account {:?}, asset {:?}, topoheight {}", key, asset, topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
@@ -45,7 +47,8 @@ impl BalanceProvider for MemoryStorage {
         self.accounts.get(key)
             .and_then(|acc| acc.balances.get(asset))
             .and_then(|versions| versions.keys().last().cloned())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Last topoheight for balance not found for account {:?}, asset {:?}", key, asset))
+            .map_err(|e| e.into())
     }
 
     async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<(VersionedBalance, bool), BlockchainError> {
@@ -79,7 +82,8 @@ impl BalanceProvider for MemoryStorage {
             .and_then(|versions| versions.last_key_value());
 
         version.map(|(&topo, balance)| (topo, balance.clone()))
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Last balance not found for account {:?}, asset {:?}", key, asset))
+            .map_err(|e| e.into())
     }
 
     fn set_last_topoheight_for_balance(&mut self, _: &PublicKey, _: &Hash, _: TopoHeight) -> Result<(), BlockchainError> {
@@ -136,7 +140,7 @@ impl BalanceProvider for MemoryStorage {
         let mut iter = self.accounts.get(key)
             .and_then(|acc| acc.balances.get(asset))
             .map(|versions| versions.range(minimum_topoheight..=maximum_topoheight))
-            .ok_or(BlockchainError::Unknown)?;
+            .with_context(|| format!("Spendable balances not found for account {:?}, asset {:?}", key, asset))?;
 
         let mut next_topo = None;
         while let Some((&topo, version)) = iter.next_back().filter(|_| balances.len() < maximum) {

@@ -52,7 +52,8 @@ impl ContractProvider for MemoryStorage {
         self.contracts.get(hash)
             .and_then(|entry| entry.modules.get(&topoheight))
             .cloned()
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Contract module not found for contract {}, topoheight {}", hash, topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError> {
@@ -77,7 +78,7 @@ impl ContractProvider for MemoryStorage {
 
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         self.contracts.get_mut(hash)
-            .ok_or(BlockchainError::Unknown)?
+            .with_context(|| format!("Cannot delete contract module, contract not found: {}", hash))?
             .modules
             .pop_last();
 
@@ -110,7 +111,8 @@ impl ContractProvider for MemoryStorage {
             .map(|entry| {
                 entry.transactions.insert(PooledArc::from_ref(tx));
             })
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Cannot add transaction for contract, contract not found: {}", contract))
+            .map_err(|e| e.into())
     }
 
     async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {

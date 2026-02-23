@@ -1,3 +1,4 @@
+use anyhow::Context;
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use futures::stream;
@@ -47,7 +48,8 @@ impl ContractScheduledExecutionProvider for MemoryStorage {
                 .and_then(|executions_at_topo| executions_at_topo.get(&topoheight))
             )
             .cloned()
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Scheduled execution not found for contract {} at topoheight {}", contract, topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_contract_scheduled_executions_for_execution_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + Send + 'a, BlockchainError> {

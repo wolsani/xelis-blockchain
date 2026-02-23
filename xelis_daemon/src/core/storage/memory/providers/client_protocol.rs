@@ -1,3 +1,4 @@
+use anyhow::Context;
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::crypto::Hash;
@@ -13,7 +14,8 @@ impl ClientProtocolProvider for MemoryStorage {
         self.transactions.get(tx)
             .and_then(|entry| entry.executed_in_block.as_ref())
             .map(|h| h.as_ref().clone())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Executed block not found for transaction {}", tx))
+            .map_err(|e| e.into())
     }
 
     async fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
@@ -37,7 +39,7 @@ impl ClientProtocolProvider for MemoryStorage {
         if let Some(entry) = self.transactions.get_mut(tx) {
             Ok(entry.linked_blocks.insert(PooledArc::from_ref(block)))
         } else {
-            Err(BlockchainError::Unknown)
+            Err(BlockchainError::TransactionNotFound)
         }
     }
 
@@ -51,7 +53,8 @@ impl ClientProtocolProvider for MemoryStorage {
     async fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError> {
         self.transactions.get(hash)
             .map(|entry| entry.linked_blocks.iter().map(|h| h.as_ref().clone()).collect())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Linked blocks not found for transaction {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn mark_tx_as_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
@@ -60,7 +63,7 @@ impl ClientProtocolProvider for MemoryStorage {
                 entry.executed_in_block = Some(PooledArc::from_ref(block));
                 Ok(())
             },
-            None => Err(BlockchainError::Unknown),
+            None => Err(BlockchainError::TransactionNotFound),
         }
     }
 
@@ -69,7 +72,7 @@ impl ClientProtocolProvider for MemoryStorage {
             entry.executed_in_block = None;
             Ok(())
         } else {
-            Err(BlockchainError::Unknown)
+            Err(BlockchainError::TransactionNotFound)
         }
     }
 
@@ -78,7 +81,7 @@ impl ClientProtocolProvider for MemoryStorage {
             entry.linked_blocks = blocks.iter().map(|h| PooledArc::from_ref(h)).collect();
             Ok(())
         } else {
-            Err(BlockchainError::Unknown)
+            Err(BlockchainError::TransactionNotFound)
         }
     }
 }

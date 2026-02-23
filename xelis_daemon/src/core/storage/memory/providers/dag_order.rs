@@ -1,3 +1,4 @@
+use anyhow::Context;
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
@@ -15,7 +16,8 @@ impl DagOrderProvider for MemoryStorage {
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
         self.topo_by_hash.get(hash)
             .copied()
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Topoheight not found for block {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
@@ -38,7 +40,8 @@ impl DagOrderProvider for MemoryStorage {
     async fn get_hash_at_topo_height(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         self.hash_at_topo.get(&topoheight)
             .map(|h| h.as_ref().clone())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Hash not found for topoheight {}", topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn has_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<bool, BlockchainError> {

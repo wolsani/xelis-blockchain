@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
@@ -34,13 +35,15 @@ impl DifficultyProvider for MemoryStorage {
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         self.blocks.get(hash)
             .map(|entry| entry.metadata.difficulty.clone())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Difficulty not found for block {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         self.blocks.get(hash)
             .map(|entry| entry.metadata.cumulative_difficulty.clone())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Cumulative difficulty not found for block {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
@@ -51,12 +54,14 @@ impl DifficultyProvider for MemoryStorage {
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         self.blocks.get(hash)
             .map(|h| Immutable::Arc(h.header.clone()))
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Block header not found for block {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         self.blocks.get(hash)
             .map(|entry| entry.metadata.covariance.clone())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Estimated covariance not found for block {}", hash))
+            .map_err(|e| e.into())
     }
 }

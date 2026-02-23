@@ -155,6 +155,8 @@ pub enum DiskContext {
 #[derive(Error, Debug, EnumDiscriminants, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum BlockchainError {
+    #[error("transaction not found")]
+    TransactionNotFound,
     #[error("invalid tips order for block {0}")]
     InvalidTipsOrder(Hash),
     #[error("transaction already executed: {0}")]
@@ -237,6 +239,10 @@ pub enum BlockchainError {
     GasOverflow,
     #[error("Unknown data store error")]
     Unknown,
+    #[error("No linked blocks found for transaction")]
+    NoLinkedBlocksForTransaction,
+    #[error("Scheduled execution not found")]
+    ScheduledExecutionNotFound,
     #[error("Unexpected transaction variant to set fees")]
     UnexpectedTransactionVariant,
     #[error("Unsupported operation")]

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use anyhow::Context;
 use xelis_common::crypto::Hash;
 use crate::core::{
     error::BlockchainError,
@@ -16,7 +17,8 @@ impl BlockExecutionOrderProvider for MemoryStorage {
     async fn get_block_position_in_order(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         self.blocks.get_index_of(hash)
             .map(|idx| idx as u64)
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Block position in order not found for block {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn has_block_position_in_order(&self, hash: &Hash) -> Result<bool, BlockchainError> {

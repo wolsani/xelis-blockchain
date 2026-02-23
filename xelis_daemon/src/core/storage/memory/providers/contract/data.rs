@@ -1,5 +1,6 @@
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
+use anyhow::Context;
 use futures::stream;
 use xelis_common::{
     block::TopoHeight,
@@ -40,7 +41,8 @@ impl ContractDataProvider for MemoryStorage {
             .and_then(|entry| entry.data.get(key))
             .and_then(|data_map| data_map.get(&topoheight))
             .cloned()
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Contract data not found for contract {:?}, key {:?}, topoheight {}", contract, key, topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
@@ -73,7 +75,7 @@ impl ContractDataProvider for MemoryStorage {
 
     async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
         let entries = self.contracts.get(contract)
-            .ok_or(BlockchainError::Unknown)?
+            .with_context(|| format!("Contract data entries not found for contract {:?}, topoheight {}", contract, topoheight))?
             .data
             .iter()
             .filter_map(move |(key, data_map)| data_map.range(..=topoheight)

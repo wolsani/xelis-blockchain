@@ -338,7 +338,7 @@ impl<'a> FinalizedChainState<'a> {
         debug!("applying scheduled executions at topoheights");
         for hash in self.contract_manager.executions.at_topoheight {
             let execution = self.contract_manager.executions.executions.get(&hash)
-                .ok_or(BlockchainError::Unknown)?;
+                .ok_or(BlockchainError::ScheduledExecutionNotFound)?;
 
             if let ScheduledExecutionKind::TopoHeight(execution_topoheight) = execution.kind {
                 trace!("storing scheduled execution of contract {} with caller {} at topoheight {}", execution.contract, execution.hash, self.topoheight);
@@ -921,7 +921,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     #[inline]
     pub fn mark_tx_as_executed_in_block(&mut self, tx_hash: &'b Hash, block_hash: &'b Hash) -> Result<(), BlockchainError> {
         let (set, executed, _) = self.transactions_links.get_mut(tx_hash)
-            .ok_or(BlockchainError::Unknown)?;
+            .ok_or(BlockchainError::NoLinkedBlocksForTransaction)?;
 
         set.insert(block_hash);
 
@@ -1111,7 +1111,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
 
             for execution in executions {
                 let execution = self.contract_manager.executions.executions.remove(&execution)
-                    .ok_or(BlockchainError::Unknown)?;
+                    .ok_or(BlockchainError::ScheduledExecutionNotFound)?;
 
                 self.process_execution(
                     Cow::Owned(execution.contract.clone()),

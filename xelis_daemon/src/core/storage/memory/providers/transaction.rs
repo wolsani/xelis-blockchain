@@ -2,6 +2,7 @@ use pooled_arc::PooledArc;
 use std::sync::Arc;
 use async_trait::async_trait;
 use futures::stream;
+use anyhow::Context;
 use xelis_common::{
     crypto::Hash,
     immutable::Immutable,
@@ -20,13 +21,15 @@ impl TransactionProvider for MemoryStorage {
     async fn get_transaction(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         self.transactions.get(hash)
             .map(|entry| Immutable::Arc(entry.transaction.clone()))
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Transaction not found: {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
         self.transactions.get(hash)
             .map(|entry| entry.transaction.size())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Transaction size not found for hash: {}", hash))
+            .map_err(|e| e.into())
     }
 
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
@@ -61,7 +64,7 @@ impl TransactionProvider for MemoryStorage {
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         let entry = self.transactions.remove(hash)
-            .ok_or(BlockchainError::Unknown)?;
+            .with_context(|| format!("Cannot delete transaction, not found: {:?}", hash))?;
 
         if let Some(contract) = entry.transaction.invoked_contract().and_then(|contract| self.contracts.get_mut(contract)) {
             contract.transactions.shift_remove(hash);

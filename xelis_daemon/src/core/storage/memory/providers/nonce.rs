@@ -1,5 +1,6 @@
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
+use anyhow::Context;
 use xelis_common::{
     account::VersionedNonce,
     block::TopoHeight,
@@ -24,19 +25,22 @@ impl NonceProvider for MemoryStorage {
     async fn get_last_topoheight_for_nonce(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError> {
         self.accounts.get(key)
         .and_then(|acc| acc.nonces.last_key_value().map(|(topo, _)| *topo))
-        .ok_or(BlockchainError::Unknown)
+        .with_context(|| format!("Last topoheight for nonce not found for account {:?}", key))
+        .map_err(|e| e.into())
     }
 
     async fn get_last_nonce(&self, key: &PublicKey) -> Result<(TopoHeight, VersionedNonce), BlockchainError> {
         self.accounts.get(key)
             .and_then(|acc| acc.nonces.last_key_value().map(|(topo, nonce)| (*topo, nonce.clone())))
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Last nonce not found for account {:?}", key))
+            .map_err(|e| e.into())
     }
 
     async fn get_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<VersionedNonce, BlockchainError> {
         self.accounts.get(key)
             .and_then(|acc| acc.nonces.get(&topoheight).cloned())
-            .ok_or(BlockchainError::Unknown)
+            .with_context(|| format!("Nonce not found for account {:?}, topoheight {}", key, topoheight))
+            .map_err(|e| e.into())
     }
 
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedNonce)>, BlockchainError> {
