@@ -240,6 +240,11 @@ async fn test_btree_internal_mutability() {
 
             let tmp: Foo = store.get(b"key").unwrap();
             assert(tmp != foo);
+            // Modify again to verify it's a different instance
+            tmp.data[0] = 100;
+
+            let tmp2: Foo = store.get(b"key").unwrap();
+            assert(tmp2.data[0] == 1); // Original value should remain unchanged
 
             return 0
         }
