@@ -65,14 +65,22 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
         .entry(key.clone_ref()) {
             Entry::Occupied(v) => v.get()
                 .as_ref()
-                .and_then(|(_, v)| v.clone()),
+                .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+                    v.clone_ref()
+                } else {
+                    v.clone()
+                })),
             Entry::Vacant(v) => {
                 let data = storage.load_data(&zelf.0, &key, state.topoheight).await?
                     .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
 
                 v.insert(data)
                     .as_ref()
-                    .and_then(|(_, v)| v.clone())
+                    .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+                        v.clone_ref()
+                    } else {
+                        v.clone()
+                    }))
             }
     };
 

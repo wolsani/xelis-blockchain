@@ -64,7 +64,11 @@ pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params
             } else {
                 &cache.memory
             }.get(&key)
-            .map(|v| v.clone_ref())
+            .map(|v| if state.cache_clone_refs {
+                v.clone_ref()
+            } else {
+                v.clone()
+            })
         ).unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))

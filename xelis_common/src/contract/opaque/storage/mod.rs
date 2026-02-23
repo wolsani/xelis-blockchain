@@ -107,14 +107,23 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     }
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
-    let value = match cache.storage.entry(key.clone()) {
+    let value = match cache.storage.entry(key.clone_ref()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
-            .and_then(|(_, v)| v.as_ref().map(|v| v.clone_ref())),
+            .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+                v.clone_ref()
+            } else {
+                v.clone()
+            })),
         Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 debug!("storage load cache missed for key {}, fetched at topoheight {}: {:?}", key, topoheight, constant);
-                v.insert(Some((VersionedState::FetchedAt(topoheight), constant.as_ref().map(|v| v.clone_ref()))));
+                let stored = constant.as_ref().map(|v| if state.cache_clone_refs {
+                    v.clone_ref()
+                } else {
+                    v.clone()
+                });
+                v.insert(Some((VersionedState::FetchedAt(topoheight), stored)));
                 constant
             },
             None => {
