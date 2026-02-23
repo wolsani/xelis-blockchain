@@ -64,7 +64,7 @@ impl TransactionProvider for MemoryStorage {
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         let entry = self.transactions.remove(hash)
-            .with_context(|| format!("Cannot delete transaction, not found: {:?}", hash))?;
+            .with_context(|| format!("Cannot delete transaction, not found: {}", hash))?;
 
         if let Some(contract) = entry.transaction.invoked_contract().and_then(|contract| self.contracts.get_mut(contract)) {
             contract.transactions.shift_remove(hash);
