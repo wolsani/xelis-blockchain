@@ -1,5 +1,4 @@
-use crate::contract::vm::ExitValue;
-
+use crate::{block::BlockVersion, contract::vm::ExitValue};
 use super::*;
 
 /// Test basic BTree insert and get operations
@@ -19,7 +18,7 @@ async fn test_btree_insert_and_get() {
         }
     "#;
 
-    let mut chain_state = MockChainState::new();
+    let mut chain_state = MockChainState::with(BlockVersion::V6);
     let contract_hash = deploy_contract(&mut chain_state, code, ContractVersion::V1)
         .await
         .expect("deploy contract")

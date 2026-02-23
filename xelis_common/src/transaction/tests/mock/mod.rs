@@ -456,7 +456,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider,  anyhow::Error> for Mo
             gas_fee_allowance: 0,
             environments: Cow::Owned(HashMap::new()),
             loaded_modules: Default::default(),
-            cache_clone_refs: false,
+            cache_clone_refs: self.block.get_version() < BlockVersion::V6,
         };
 
         Ok((environment, chain_state))

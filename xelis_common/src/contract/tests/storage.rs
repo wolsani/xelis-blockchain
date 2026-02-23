@@ -1,4 +1,4 @@
-use crate::versioned_type::VersionedState;
+use crate::{block::BlockVersion, versioned_type::VersionedState};
 
 use super::*;
 
@@ -35,7 +35,7 @@ async fn test_insert_and_get() {
         }
     "#;
 
-    let mut chain_state = MockChainState::new();
+    let mut chain_state = MockChainState::with(BlockVersion::V6);
     let contract_hash = deploy_contract(&mut chain_state, code, ContractVersion::V1)
         .await
         .expect("deploy contract")
