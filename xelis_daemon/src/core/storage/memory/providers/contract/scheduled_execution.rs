@@ -22,9 +22,9 @@ impl ContractScheduledExecutionProvider for MemoryStorage {
             .entry(shared.clone())
             .or_default()
             .scheduled_executions
-            .entry(execution_topoheight)
+            .entry(topoheight)
             .or_default()
-            .insert(topoheight, execution.clone());
+            .insert(execution_topoheight, execution.clone());
 
         self.scheduled_executions_per_topoheight
             .entry(execution_topoheight)
@@ -43,8 +43,8 @@ impl ContractScheduledExecutionProvider for MemoryStorage {
     async fn get_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<ScheduledExecution, BlockchainError> {
         self.scheduled_executions_per_topoheight.get(&topoheight)
             .and_then(|executions| executions.get(contract))
-            .and_then(|&exec_topo| self.contracts.get(contract)
-                .and_then(|contract_data| contract_data.scheduled_executions.get(&exec_topo))
+            .and_then(|&reg_topo| self.contracts.get(contract)
+                .and_then(|contract_data| contract_data.scheduled_executions.get(&reg_topo))
                 .and_then(|executions_at_topo| executions_at_topo.get(&topoheight))
             )
             .cloned()

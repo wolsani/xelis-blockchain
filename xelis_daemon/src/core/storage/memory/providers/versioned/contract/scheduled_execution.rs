@@ -12,8 +12,9 @@ impl VersionedScheduledExecutionsProvider for MemoryStorage {
         self.contracts.iter_mut()
             .for_each(|(contract, contract_data)| {
                 contract_data.scheduled_executions.split_off(&topoheight)
-                .keys()
-                .for_each(|&exec_topo| {
+                .into_iter()
+                .flat_map(|(_, entries)| entries.into_keys())
+                .for_each(|exec_topo| {
                     let is_empty = self.scheduled_executions_per_topoheight.get_mut(&exec_topo)
                         .map_or(false, |executions| {
                             executions.remove(contract);
@@ -33,8 +34,9 @@ impl VersionedScheduledExecutionsProvider for MemoryStorage {
         self.contracts.iter_mut()
             .for_each(|(contract, contract_data)| {
                 contract_data.scheduled_executions.split_off(&topoheight)
-                .keys()
-                .for_each(|&exec_topo| {
+                .into_iter()
+                .flat_map(|(_, entries)| entries.into_keys())
+                .for_each(|exec_topo| {
                     let is_empty = self.scheduled_executions_per_topoheight.get_mut(&exec_topo)
                         .map_or(false, |executions| {
                             executions.remove(contract);
@@ -57,16 +59,18 @@ impl VersionedScheduledExecutionsProvider for MemoryStorage {
 
                 // Delete only the planned scheduled executions that were executed below the topoheight
                 // and remove the corresponding entries in scheduled_executions_per_topoheight.
-                contract_data.scheduled_executions.keys()
-                    .for_each(|&exec_topo| {
-                        let is_empty = self.scheduled_executions_per_topoheight.get_mut(&exec_topo)
+                contract_data.scheduled_executions
+                    .iter()
+                    .flat_map(|(_, entries)| entries.keys())
+                    .for_each(|exec_topo| {
+                        let is_empty = self.scheduled_executions_per_topoheight.get_mut(exec_topo)
                             .map_or(false, |executions| {
                                 executions.remove(contract);
                                 executions.is_empty()
                             });
 
                         if is_empty {
-                            self.scheduled_executions_per_topoheight.remove(&exec_topo);
+                            self.scheduled_executions_per_topoheight.remove(exec_topo);
                         }
                     });
                     

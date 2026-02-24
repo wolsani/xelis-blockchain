@@ -71,7 +71,7 @@ pub(crate) struct ContractEntry {
     data: HashMap<ValueCell, BTreeMap<TopoHeight, VersionedContractData>>,
     transactions: IndexSet<PooledArc<Hash>>,
     balances: HashMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedContractBalance>>,
-    // Scheduled executions registered at said topoheight
+    // Scheduled executions registered at said topoheight -> execution topoheight -> execution
     scheduled_executions: BTreeMap<TopoHeight, BTreeMap<TopoHeight, ScheduledExecution>>,
     // Event callbacks registered at said topoheight
     // (event id, contract listener) -> registration topoheight
