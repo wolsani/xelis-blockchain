@@ -291,6 +291,16 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
     }
 ];
 
+// Devnet hard forks
+const DEV_NET_HARD_FORKS: [HardFork; 1] = [
+    HardFork {
+        height: 0,
+        version: BlockVersion::V6,
+        changelog: "Initial version for devnet with all features enabled",
+        version_requirement: None
+    }
+];
+
 // Mainnet seed nodes
 const MAINNET_SEED_NODES: [&str; 7] = [
     // France
@@ -366,6 +376,7 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 pub const fn get_hard_forks(network: &Network) -> &'static [HardFork] {
     match network {
         Network::Mainnet => &HARD_FORKS,
+        Network::Devnet => &DEV_NET_HARD_FORKS,
         _ => &OTHERS_NETWORK_HARD_FORKS,
     }
 }
