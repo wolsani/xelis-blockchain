@@ -1,6 +1,9 @@
 mod providers;
 mod cache;
 
+#[cfg(test)]
+mod tests;
+
 pub mod types;
 
 #[cfg(feature = "sled")]
