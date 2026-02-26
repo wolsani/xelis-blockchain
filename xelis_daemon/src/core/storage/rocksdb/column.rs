@@ -140,11 +140,16 @@ impl Column {
             | VersionedContractsData
             | PrefixedRegistrations
             // Special case: prefixed with topoheight too
-            | DelayedExecution => Some(PREFIX_TOPOHEIGHT_LEN),
+            | DelayedExecution
+            | DelayedExecutionRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
 
             ContractsBalances
             | ContractsData
-            | Balances => Some(PREFIX_ID_LEN),
+            | Balances
+            | ContractsTransactions => Some(PREFIX_ID_LEN),
+
+            // Filter on contract_id+event_id
+            ContractEventCallbacks => Some(PREFIX_ID_LEN * 2),
 
             _ => None,
         }

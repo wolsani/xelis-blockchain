@@ -61,10 +61,12 @@ impl ContractScheduledExecutionProvider for MemoryStorage {
     }
 
     async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
-            .into_iter()
-            .flat_map(|executions| executions.iter())
-            .map(|(contract, reg_topo)| Ok((*reg_topo, contract.as_ref().clone())))
+        Ok(self.contracts.iter()
+            .flat_map(move |(contract, contract_data)| contract_data.scheduled_executions.get(&topoheight)
+                .into_iter()
+                .flat_map(move |executions| executions.iter()
+                    .map(move |(&exec_topo, _)| Ok((exec_topo, contract.as_ref().clone()))))
+            )
         )
     }
 
@@ -82,19 +84,19 @@ impl ContractScheduledExecutionProvider for MemoryStorage {
         )
     }
 
+    // Returns a stream of (execution_topoheight, registration_topoheight, execution)
     async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight, min_execution_topoheight: Option<TopoHeight>) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
-        let iter = self.scheduled_executions_per_topoheight.range(minimum_topoheight..=maximum_topoheight)
-            .flat_map(move |(&exec_topo, executions)| executions.iter()
-                .filter(move |(_, &reg_topo)| min_execution_topoheight.map_or(true, |min_exec| reg_topo >= min_exec))
-                .filter_map(move |(contract, reg_topo)| {
-                    self.contracts.get(contract)
-                        .and_then(|contract_data| contract_data.scheduled_executions.get(reg_topo))
-                        .and_then(|executions_at_topo| executions_at_topo.get(&exec_topo))
-                        .cloned()
-                        .map(|execution| (*reg_topo, exec_topo, execution))
-                })
-            )
-            .map(Ok);
-        Ok(stream::iter(iter))
+        Ok(stream::iter(self.contracts.iter()
+            .flat_map(move |(_, contract_data)| contract_data.scheduled_executions.range(minimum_topoheight..=maximum_topoheight)
+                .flat_map(move |(&reg_topo, executions_at_topo)| executions_at_topo.range(min_execution_topoheight.unwrap_or(0)..)
+                    .filter_map(move |(&exec_topo, execution)| {
+                        if min_execution_topoheight.map_or(true, |min_exec| exec_topo >= min_exec) {
+                            Some(Ok((exec_topo, reg_topo, execution.clone())))
+                        } else {
+                            None
+                        }
+                    })
+                )
+            )))
     }
 }
