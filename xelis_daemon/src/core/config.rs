@@ -426,12 +426,24 @@ pub struct SledConfig {
     #[serde(default = "default_db_cache_size")]
     pub internal_cache_size: u64,
     /// Internal DB mode to use
-    #[clap(name = "sled-internal-db-mode", long, value_enum, default_value_t = StorageMode::LowSpace)]
+    #[clap(name = "sled-internal-db-mode", long, value_enum, default_value_t)]
     #[serde(default)]
     pub internal_db_mode: StorageMode,
 }
 
+#[cfg(feature = "sled")]
+impl Default for SledConfig {
+    fn default() -> Self {
+        Self {
+            cache_size: default_sled_cache_size(),
+            internal_cache_size: default_db_cache_size(),
+            internal_db_mode: StorageMode::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+#[cfg(feature = "rocksdb")]
 pub struct RocksDBConfig {
     /// How many background threads RocksDB should use for parallelism.
     /// Default set to the available parallelism detected.
@@ -489,6 +501,25 @@ pub struct RocksDBConfig {
     pub write_buffer_shared: bool,
 }
 
+#[cfg(feature = "rocksdb")]
+impl Default for RocksDBConfig {
+    fn default() -> Self {
+        Self {
+            parallelism: detect_available_parallelism(),
+            max_background_jobs: detect_available_parallelism(),
+            max_subcompaction_jobs: detect_available_parallelism(),
+            low_priority_background_threads: detect_available_parallelism(),
+            max_open_files: default_max_open_files(),
+            keep_max_log_files: default_keep_max_log_files(),
+            compression_mode: CompressionMode::default(),
+            cache_mode: CacheMode::default(),
+            cache_size: default_db_cache_size(),
+            write_buffer_size: default_db_cache_size(),
+            write_buffer_shared: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct Config {
     /// RPC configuration
@@ -502,6 +533,7 @@ pub struct Config {
     #[clap(flatten)]
     pub sled: SledConfig,
     /// RocksDB Backend if enabled
+    #[cfg(feature = "rocksdb")]
     #[clap(flatten)]
     pub rocksdb: RocksDBConfig,
     /// Set dir path for blockchain storage.
