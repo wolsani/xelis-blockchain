@@ -5,6 +5,7 @@ use std::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
+use futures::TryStreamExt;
 use log::{debug, trace, warn};
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
@@ -1025,7 +1026,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                     debug!("event {} for contract {} already processed, skipping", event.event_id, event.contract);
                     let topoheight = self.inner.topoheight;
                     let mut callbacks = self.inner.storage.get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .try_collect::<Vec<_>>().await?;
 
                     // Sort by contract hash to have a deterministic order
                     callbacks.sort_by(|a, b| a.0.cmp(&b.0));

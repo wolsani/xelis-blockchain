@@ -25,7 +25,8 @@ use crate::{
             VersionedContractBalance,
             VersionedContractData,
             VersionedMultiSig,
-            VersionedSupply
+            VersionedSupply,
+            VersionedEventCallbackRegistration,
         },
         blockdag,
     },
@@ -392,7 +393,27 @@ impl<S: Storage> P2pServer<S> {
                     None
                 };
                 StepResponse::ContractsExecutions(executions, page)
-            }
+            },
+            StepRequest::ContractsEvents(contract, min, max, page) => {
+                let page = page.unwrap_or(0);
+
+                let stream = storage.get_listeners_for_contract_events(&contract, min, max).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE);
+
+                let events: IndexMap<_, _> = stream.boxed()
+                    .map(|res| res.map(|(event_id, listener_contract, registration)| {
+                        ((listener_contract, event_id), registration)
+                    }))
+                    .try_collect().await?;
+
+                let page = if events.len() == MAX_ITEMS_PER_PAGE {
+                    Some(page + 1)
+                } else {
+                    None
+                };
+                StepResponse::ContractsEvents(events, page)
+            },
             StepRequest::BlocksMetadata(topoheight) => {
                 // go from the lowest available point until the requested stable topoheight
                 let lower = if topoheight - PRUNE_SAFETY_LIMIT <= pruned_topoheight {
@@ -1041,6 +1062,34 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    // Request every events callbacks registered for this contract
+    async fn handle_contract_events(&self, peer: &Arc<Peer>, contract: &Hash, current_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        let mut next_page = None;
+        loop {
+            let StepResponse::ContractsEvents(events, page) = peer.request_boostrap_chain(StepRequest::ContractsEvents(Cow::Borrowed(&contract), current_topoheight, stable_topoheight, next_page)).await? else {
+                // shouldn't happen
+                error!("Received an invalid StepResponse (how ?) while fetching contract events");
+                return Err(P2pError::MalformedPacket.into())
+            };
+
+            let mut storage = self.blockchain.get_storage().write().await;
+            for ((listener_contract, event_id), registration) in events {
+                let topo = storage.get_event_callback_for_contract_at_maximum_topoheight(&contract, event_id, &listener_contract, current_topoheight).await?
+                    .map(|(topo, _)| topo);
+
+                let version = VersionedEventCallbackRegistration::new(registration, topo);
+                storage.set_last_contract_event_callback(contract, event_id, &listener_contract, version, stable_topoheight).await?;
+            }
+
+            next_page = page;
+            if next_page.is_none() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     // Update all keys using bootstrap request
     // This will fetch the nonce and associated balance for each asset
     async fn update_bootstrap_contracts(&self, peer: &Arc<Peer>, contracts: &IndexSet<Hash>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
@@ -1058,7 +1107,8 @@ impl<S: Storage> P2pServer<S> {
                 // But once the module is stored, we can support concurrency
                 try_join!(
                     self.handle_contract_stores(peer, contract, stable_topoheight),
-                    self.handle_contract_balances(peer, contract, stable_topoheight)
+                    self.handle_contract_balances(peer, contract, stable_topoheight),
+                    self.handle_contract_events(peer, contract, our_topoheight, stable_topoheight)
                 ).map(|_| ())
             }).await?;
 

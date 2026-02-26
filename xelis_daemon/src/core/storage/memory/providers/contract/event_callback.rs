@@ -1,3 +1,5 @@
+use futures::{Stream, stream};
+use log::trace;
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use xelis_common::{
@@ -55,8 +57,8 @@ impl ContractEventCallbackProvider for MemoryStorage {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, VersionedEventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(self.contracts.get(contract)
+    ) -> Result<impl Stream<Item = Result<(Hash, TopoHeight, VersionedEventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
+        Ok(stream::iter(self.contracts.get(contract)
             .into_iter()
             .flat_map(move |data| data.events_callbacks.get(&event_id).into_iter()
                 .flat_map(move |listeners| listeners.iter()
@@ -67,7 +69,7 @@ impl ContractEventCallbackProvider for MemoryStorage {
                     })
                 )
             )
-        )
+        ))
     }
 
     async fn get_event_callbacks_available_at_maximum_topoheight<'a>(
@@ -75,8 +77,8 @@ impl ContractEventCallbackProvider for MemoryStorage {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, EventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(self.contracts.get(contract)
+    ) -> Result<impl Stream<Item = Result<(Hash, EventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError> {
+        Ok(stream::iter(self.contracts.get(contract)
             .into_iter()
             .flat_map(move |data| data.events_callbacks.get(&event_id).into_iter()
                 .flat_map(move |listeners| listeners.iter()
@@ -87,6 +89,29 @@ impl ContractEventCallbackProvider for MemoryStorage {
                     })
                 )
             )
-        )
+        ))
+    }
+
+    /// Get all available listeners for a contract at a maximum topoheight
+    async fn get_listeners_for_contract_events<'a>(
+        &'a self,
+        contract: &'a Hash,
+        min_topoheight: TopoHeight,
+        max_topoheight: TopoHeight,
+    ) -> Result<impl Stream<Item = Result<(u64, Hash, Option<EventCallbackRegistration>), BlockchainError>> + Send + 'a, BlockchainError> {
+        trace!("get listeners for contract {} events between topoheights {} and {}", contract, min_topoheight, max_topoheight);
+
+        Ok(stream::iter(self.contracts.get(contract)
+            .into_iter()
+            .flat_map(move |data| data.events_callbacks.iter()
+                .flat_map(move |(&event_id, listeners)| listeners.iter()
+                    .filter_map(move |(listener, versions)| {
+                        versions.range(min_topoheight..=max_topoheight).next_back().map(|(_, version)| {
+                            Ok((event_id, listener.as_ref().clone(), version.get().clone()))
+                        })
+                    })
+                )
+            )
+        ))
     }
 }
